@@ -5,8 +5,10 @@ import bencodepy
 
 PART_SIZE = 512 * 1024  # 512KB
 
+
 def sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
+
 
 def build_file_tree(file_list, base_dir):
     tree = {}
@@ -17,6 +19,30 @@ def build_file_tree(file_list, base_dir):
             current = current.setdefault(part.encode(), {})
         current[rel_parts[-1].encode()] = {b"length": os.path.getsize(file)}
     return tree
+
+def build_file_tree(file_list, base_dir): # new version of the function
+    """
+    Builds a BitTorrent v2-style file tree.
+    Each file is placed in a nested dictionary structure,
+    with its relative path and length.
+    """
+    tree = {}
+
+    for file in file_list:
+        # Get path parts relative to base_dir (e.g. ['folder', 'file.txt'])
+        relative_parts = file.relative_to(base_dir).parts
+        current = tree
+
+        # Walk through the folder structure
+        for folder in relative_parts[:-1]:
+            current = current.setdefault(folder.encode(), {})
+
+        # Add the file with its length
+        filename = relative_parts[-1]
+        current[filename.encode()] = {b"length": os.path.getsize(file)}
+
+    return tree
+
 
 def read_files_and_generate_pieces(file_list):
     buffer = b""
@@ -32,11 +58,13 @@ def read_files_and_generate_pieces(file_list):
         pieces.append(sha256(buffer))
     return pieces
 
+
 def generate_output_path(path: Path) -> Path:
     if path.is_dir():
         return path.with_name(path.name + ".torrent")
     else:
         return path.with_suffix(path.suffix + ".torrent")
+
 
 def create_torrent(path: str, tracker_url: str):
     path = Path(path)
@@ -44,7 +72,7 @@ def create_torrent(path: str, tracker_url: str):
         raise ValueError("tracker_url is required")
 
     if path.is_dir():
-        file_list = sorted([f for f in path.rglob("*") if f.is_file()])
+        file_list = sorted([f for f in path.rglob("*") if f.is_file()])  #
         base_dir = path
     else:
         file_list = [path]
