@@ -1,6 +1,11 @@
 import os
+import time
 
-filename = "file.banana.txt"
-name, ext = os.path.splitext(filename)
-print(name)  # outputs: file
-print(ext)   # outputs: .txt
+
+t = time.time()
+
+with open("file.txt", 'r') as file:
+    data = file.read(1)
+print(len(data))
+
+print(time.time() - t)
