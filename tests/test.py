@@ -1,4 +1,4 @@
 from pathlib import Path
 
 path = Path("requirements.txt")
-print(path.read_bytes(3))
+print([f for f in path.rglob("*")])
