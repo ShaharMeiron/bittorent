@@ -1,4 +1,4 @@
-import time
+from pathlib import Path
 
-creation_date = int(time.time())
-print(creation_date)
+path = Path("requirements.txt")
+print(path.read_bytes(3))
