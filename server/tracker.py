@@ -1,72 +1,66 @@
 from flask import Flask, request, Response
 import bencodepy
-from collections import defaultdict
+import urllib.parse
 import time
+import logging
 
 app = Flask(__name__)
 
-# זיכרון: לכל info_hash רשימת peers
-peers_dict = defaultdict(list)
-# כמה זמן Peer נשאר ברשימה (בשניות)
-PEER_TIMEOUT = 60 * 30  # 30 דקות
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    filename='tracker.log',
+    filemode='a'
+)
+
+# info_hash (bytes) -> set of (ip, port, peer_id, last_seen)
+torrents = {}
+
+ANNOUNCE_INTERVAL = 1800  # seconds
 
 
-@app.route('/announce')
+@app.route('/announce', methods=['GET'])
 def announce():
-	# שלוף פרמטרים
-	info_hash = request.args.get('info_hash', type=str)
-	peer_id = request.args.get('peer_id', type=str)
-	ip = request.remote_addr
-	port = request.args.get('port', type=int)
-	uploaded = request.args.get('uploaded', type=int)
-	downloaded = request.args.get('downloaded', type=int)
-	left = request.args.get('left', type=int)
-	event = request.args.get('event', type=str)
+    info_hash_param = request.args.get('info_hash')
+    peer_id_param = request.args.get('peer_id')
+    info_hash = urllib.parse.unquote_to_bytes(info_hash_param)
+    peer_id = urllib.parse.unquote_to_bytes(peer_id_param)
+    port = int(request.args.get('port'))
+    uploaded = int(request.args.get('uploaded', '0'))
+    downloaded = int(request.args.get('downloaded', '0'))
+    left = int(request.args.get('left', '0'))
+    compact = int(request.args.get('compact', '0'))
+    no_peer_id = None
+    if not compact:
+        no_peer_id = int(request.args.get('no_peer_id', '0'))
+    event = request.args.get('event', "")
+    ip = request.remote_addr
+    numwant = int(request.args.get('numwant', '50'))
+    key = request.args.get('key')
+    trackerid = request.args.get('trackerid')
 
-	# בדיקות בסיסיות
-	if not all([info_hash, peer_id, port]):
-		return Response("Missing params", status=400)
+    logging.info(
+        f"Announce received:\n"
+        f"  info_hash:   {info_hash.hex()}\n"
+        f"  peer_id:     {peer_id}\n"
+        f"  port:        {port}\n"
+        f"  uploaded:    {uploaded}\n"
+        f"  downloaded:  {downloaded}\n"
+        f"  left:        {left}\n"
+        f"  compact:     {compact}\n"
+        f"  no_peer_id:  {no_peer_id}\n"
+        f"  event:       {event}\n"
+        f"  ip:          {ip}\n"
+        f"  numwant:     {numwant}\n"
+        f"  key:         {key}\n"
+        f"  trackerid:   {trackerid}\n"
+        + "-" * 40
+    )
 
-	# נקה Peers ישנים
-	now = time.time()
-	peers_dict[info_hash] = [
-		peer for peer in peers_dict[info_hash]
-		if now - peer['last_seen'] < PEER_TIMEOUT
-	]
-
-	# עדכן או הוסף peer
-	for peer in peers_dict[info_hash]:
-		if peer['peer_id'] == peer_id:
-			peer['last_seen'] = now
-			peer['ip'] = ip
-			peer['port'] = port
-			break
-	else:
-		peers_dict[info_hash].append({
-			'peer_id': peer_id,
-			'ip': ip,
-			'port': port,
-			'last_seen': now
-		})
-
-	# הכנה לתשובה
-	# נחזיר peers חוץ מעצמך
-	peers = [
-		{'ip': p['ip'], 'port': p['port'], 'peer id': p['peer_id']}
-		for p in peers_dict[info_hash]
-		if p['peer_id'] != peer_id
-	]
-	response_dict = {
-		b'interval': PEER_TIMEOUT,
-		b'peers': [
-			{b'ip': p['ip'].encode(), b'port': p['port'], b'peer id': p['peer id'].encode()}
-			for p in peers
-		]
-	}
-
-	data = bencodepy.encode(response_dict)
-	return Response(data, mimetype='text/plain')
+    torrents.setdefault(info_hash, set()).add((ip, port, peer_id, time.time()))
 
 
-if __name__ == "__main__":
-	app.run(port=6969, debug=True)
+if __name__ == '__main__':
+    app.run(port=6969, debug=True)

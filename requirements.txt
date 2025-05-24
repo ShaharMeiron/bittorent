@@ -1,1 +1,5 @@
-bencodepy~=0.9.5
+flask
+pathlib
+bencodepy
+hashlib
+math
