@@ -59,8 +59,11 @@ def announce():
         + "-" * 40
     )
 
-    torrents.setdefault(info_hash, set()).add((ip, port, peer_id, time.time()))
+    if info_hash not in torrents:
+        torrents[info_hash] = set()
+    torrents[info_hash].add((ip, port, peer_id, time.time()))
+    logging.info(f"Added {ip}:{port} to {info_hash}")
 
 
 if __name__ == '__main__':
-    app.run(port=6969, debug=True)
+    app.run(port=6969, threaded=True, debug=True)

@@ -4,8 +4,10 @@ import bencodepy
 from hashlib import sha1
 import math
 from pprint import pprint
+import logging
 
 PIECE_LENGTH = 262144  # 256 KiB
+logging.basicConfig(filename="torrent.log", filemode='w', level=logging.INFO)
 
 
 def calculate_total_size(path: Path):
@@ -17,9 +19,9 @@ def calculate_total_size(path: Path):
 class Torrent:
     def __init__(
         self,
-        path: str,
-        announce: str,
-        creation_date: bool,
+        path: str = r"C:\Users\Shahar\Projects\bittorrent\client1\chemistry_experiments",
+        announce: str = "http://localhost:6969",
+        creation_date: bool = True,
         announce_list: list[list[str]] | None = None,
         comment: str | None = None,
         piece_length: int = PIECE_LENGTH,
@@ -27,6 +29,7 @@ class Torrent:
         encoding: str = None
     ):
         path: Path = Path(path)
+        print(path)
         assert path.is_dir() or path.is_file(), "the path isn't a file or directory"
         self.path = path
         assert piece_length > 0 and math.log2(piece_length) % 1 == 0, "piece_length must be a power of 2"
@@ -114,26 +117,22 @@ class Torrent:
         return pieces, rest
 
     def save_torrent_file(self, output_dir="."):
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)  # ensures the directory exists
-
-        name = self.meta_info["info"]["name"]
-        filename = f"{name}.torrent"
-        output_path = output_dir / filename
-
+        output_path = str(self.path) + ".torrent"
         with open(output_path, 'wb') as f:
             f.write(bencodepy.encode(self.meta_info))
 
         return output_path
 
-    def get_info_hash(self):
-        info_dict = self.meta_info[b'info']
-        bencoded_info = bencodepy.encode(info_dict)
-        info_hash = sha1(bencoded_info).digest()
-        return info_hash
+
+def get_info_hash(meta_info):
+    info_dict = meta_info[b'info']
+    bencoded_info = bencodepy.encode(info_dict)
+    info_hash = sha1(bencoded_info).digest()
+    return info_hash
 
 
 def decode_torrent(torrent_path: str) -> dict:
+    logging.info(f"Decoding torrent file: {torrent_path}")
     torrent_path = Path(torrent_path)
     assert torrent_path.is_file(), "the path specified isn't a file"
     with open(torrent_path, 'rb') as torrent_file:
@@ -142,7 +141,8 @@ def decode_torrent(torrent_path: str) -> dict:
 
 
 if __name__ == '__main__':
-    t = Torrent(path=r"/client1/chemistry_experiments", announce="http://localhost:6969", creation_date=True)
+
+    t = Torrent(path=r"C:\Users\Shahar\Projects\bittorrent\client1\chemistry_experiments", announce="http://localhost:6969", creation_date=True)
     t.save_torrent_file()
-    meta_info = decode_torrent(r"C:\Users\Shahar\Projects\bittorrent\metadata\example.torrent")
+    meta_info = decode_torrent(r"C:\Users\Shahar\Projects\bittorrent\client1\chemistry_experiments.torrent")
     pprint(meta_info)
