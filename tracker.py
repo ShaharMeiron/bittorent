@@ -16,9 +16,10 @@ logging.basicConfig(
 )
 
 # info_hash (bytes) -> set of (ip, port, peer_id, last_seen)
-torrents = {}
-
-ANNOUNCE_INTERVAL = 1800  # seconds
+class Tracker:
+    def __init__(self, announce_interval: int = 1800):
+        self.announce_interval = announce_interval
+        self.torrents = {}
 
 
 @app.route('/announce', methods=['GET'])
