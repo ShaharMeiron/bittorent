@@ -1,13 +1,12 @@
+import os
 from pathlib import Path
 import time
 import bencodepy
 from hashlib import sha1
 import math
-from pprint import pprint
 import logging
 
 PIECE_LENGTH = 262144  # 256 KiB
-logging.basicConfig(filename="torrent.log", filemode='w', level=logging.INFO)
 
 
 def calculate_total_size(path: Path):
@@ -15,24 +14,13 @@ def calculate_total_size(path: Path):
     size = sum(f.stat().st_size for f in files)
     return size
 
-
 class Torrent:
-    def __init__(
-        self,
-        path: str = r"C:\Users\Shahar\Projects\bittorrent\client1\chemistry_experiments",
-        announce: str = "http://localhost:6969",
-        creation_date: bool = True,
-        announce_list: list[list[str]] | None = None,
-        comment: str | None = None,
-        piece_length: int = PIECE_LENGTH,
-        creator: str = None,
-        encoding: str = None
-    ):
+    def __init__(self, path: str, announce: str = "http://localhost:6969", creation_date: bool = True,
+                 announce_list: list[list[str]] | None = None, comment: str | None = None,
+                 piece_length: int = PIECE_LENGTH, creator: str = None, encoding: str = None):
         path: Path = Path(path)
-        print(path)
-        assert path.is_dir() or path.is_file(), "the path isn't a file or directory"
+        assert path.is_dir() or path.is_file(), "The path isn't a file or directory"
         self.path = path
-        assert piece_length > 0 and math.log2(piece_length) % 1 == 0, "piece_length must be a power of 2"
         self.piece_length = piece_length
 
         info = self._build_info()
@@ -56,7 +44,6 @@ class Torrent:
         piece_length = self.piece_length
 
         if path.is_file():
-            # --- Single-file mode ---
             pieces = self._make_pieces_for_single_file(path)
             info = {
                 "piece length": piece_length,
@@ -65,7 +52,6 @@ class Torrent:
                 "length": path.stat().st_size
             }
         else:
-            # --- Multi-file mode ---
             files, pieces = self._build_files_and_pieces_for_directory()
             info = {
                 "piece length": piece_length,
@@ -120,9 +106,7 @@ class Torrent:
         output_path = str(self.path) + ".torrent"
         with open(output_path, 'wb') as f:
             f.write(bencodepy.encode(self.meta_info))
-
         return output_path
-
 
 def get_info_hash(meta_info):
     info_dict = meta_info[b'info']
@@ -130,19 +114,17 @@ def get_info_hash(meta_info):
     info_hash = sha1(bencoded_info).digest()
     return info_hash
 
-
 def decode_torrent(torrent_path: str) -> dict:
-    logging.info(f"Decoding torrent file: {torrent_path}")
     torrent_path = Path(torrent_path)
-    assert torrent_path.is_file(), "the path specified isn't a file"
+    assert torrent_path.is_file(), "The path specified isn't a file"
     with open(torrent_path, 'rb') as torrent_file:
         data = torrent_file.read()
         return bencodepy.decode(data)
 
 
 if __name__ == '__main__':
-
-    t = Torrent(path=r"C:\Users\Shahar\Projects\bittorrent\client1\chemistry_experiments", announce="http://localhost:6969", creation_date=True)
+    t = Torrent(path=os.path.join("client1", "chemistry_experiments"), announce="http://localhost:6969", creation_date=True)
     t.save_torrent_file()
-    meta_info = decode_torrent(r"C:\Users\Shahar\Projects\bittorrent\client1\chemistry_experiments.torrent")
+    meta_info = decode_torrent(os.path.join("client1", "chemistry_experiments.torrent"))
+    from pprint import pprint
     pprint(meta_info)
