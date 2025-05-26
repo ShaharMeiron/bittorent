@@ -16,6 +16,7 @@ logging.basicConfig(
     filemode='a'
 )
 
+MAX_CONNECTIONS = 10
 
 class Tracker:
     def __init__(self, announce_interval: int = 1800):
@@ -30,6 +31,11 @@ class Tracker:
                 peer_id: data for peer_id, data in peers.items()
                 if now - data[2] <= 3600
             }
+            if not self.torrents[info_hash]:
+                self.torrents.pop(info_hash, None)
+
+    def count_total_peers(self) -> int:
+        return sum(len(peers) for peers in self.torrents.values())
 
 
 tracker = Tracker()
@@ -53,6 +59,10 @@ def announce():
         numwant = int(request.args.get('numwant', '50'))
 
         tracker.cleanup_old_peers()
+
+        if tracker.count_total_peers() >= MAX_CONNECTIONS:
+            logging.warning(f"Tracker full — peer from {ip}:{port} rejected")
+            return Response("Tracker is full", status=503)
 
         if info_hash not in tracker.torrents:
             tracker.torrents[info_hash] = {}
@@ -89,4 +99,5 @@ def announce():
 
 
 if __name__ == '__main__':
+    # TODO argparse port
     app.run(port=6969, threaded=True, debug=True)
