@@ -90,6 +90,8 @@ def handle_announce():
         compact = int(request.args.get('compact', '1'))
         numwant = int(request.args.get('numwant', '50'))
 
+        logging.info(f"Received announce from {ip_address}:{port} with peer_id={peer_id.hex()} and info_hash={info_hash.hex()}")
+
         tracker.cleanup_inactive_peers()
 
         if tracker.count_all_peers() >= MAX_CONNECTIONS:

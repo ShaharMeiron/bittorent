@@ -6,6 +6,8 @@ import torrent
 import bencodepy
 import socket
 import struct
+import time
+import argparse
 
 logging.basicConfig(filename="peer.log", filemode='a', level=logging.INFO)
 
@@ -32,7 +34,7 @@ class Peer:
         self.tracker_url = meta_info[b'announce'].decode()
         self.info_hash = torrent.get_info_hash(meta_info)
 
-    def register(self):
+    def announce(self):
         url = f"{self.tracker_url}/announce"
         params = {
             "info_hash": url_encode_bytes(self.info_hash),
@@ -47,14 +49,25 @@ class Peer:
         try:
             response = requests.get(url, params=params)
             decoded = bencodepy.decode(response.content)
-            interval = decoded.get(b'interval', b'N/A')
+            interval = decoded.get(b'interval', 1800)
             peers = parse_peers(decoded.get(b'peers', b''))
             logging.info(f"Tracker interval: {interval}, peers: {peers}")
-            print("Finished register")
+            print(f"Got peers: {peers}\nSleeping for {interval} seconds...\n")
+            return int(interval)
         except Exception as e:
             logging.exception(f"Error sending announce request: {e}")
+            return 1800  # fallback to default 30 min
 
 
 if __name__ == '__main__':
-    peer = Peer(port=6881, torrent_path=os.path.join("client1", "chemistry_experiments.torrent"))
-    peer.register()
+    parser = argparse.ArgumentParser(description="Run a BitTorrent peer")
+    parser.add_argument("-p", "--port", type=int, required=True, help="Port number to use for the peer")
+    args = parser.parse_args()
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    torrent_path = os.path.join(base_dir, "client1", "chemistry_experiments.torrent")
+
+    peer = Peer(port=args.port, torrent_path=torrent_path)
+    while True:
+        interval = peer.announce()
+        time.sleep(interval)
