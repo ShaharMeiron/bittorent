@@ -1,1 +1,2 @@
-print(__file)
+import re
+print(re.__file__)

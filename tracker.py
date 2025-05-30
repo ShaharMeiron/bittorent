@@ -7,7 +7,6 @@ import socket
 
 app = Flask(__name__)
 
-
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] %(levelname)s: %(message)s',
@@ -18,6 +17,7 @@ logging.basicConfig(
 
 MAX_CONNECTIONS = 10
 MAX_PEERS_PER_IP = 3
+
 
 class Tracker:
     def __init__(self, announce_interval: int = 1800):
@@ -57,13 +57,15 @@ class Tracker:
             if current_peer_id != exclude_peer_id
         ][:max_peers]
 
-    def encode_peers_compact(self, peers_list):
+    @staticmethod
+    def encode_peers_compact(peers_list):
         return b''.join(
             socket.inet_aton(ip) + port.to_bytes(2, 'big')
             for ip, port in peers_list
         )
 
-    def encode_peers_detailed(self, peers_list):
+    @staticmethod
+    def encode_peers_detailed(peers_list):
         return [
             {b'ip': ip.encode(), b'port': port}
             for ip, port in peers_list
@@ -90,7 +92,7 @@ def handle_announce():
         compact = int(request.args.get('compact', '1'))
         numwant = int(request.args.get('numwant', '50'))
 
-        logging.info(f"Received announce from {ip_address}:{port} with peer_id={peer_id.hex()} and info_hash={info_hash.hex()}")
+        logging.info(f"[ANNOUNCE] {ip_address}:{port} → peer_id={peer_id.hex()} | info_hash={info_hash.hex()}")
 
         tracker.cleanup_inactive_peers()
 
@@ -105,10 +107,10 @@ def handle_announce():
         tracker.register_peer(info_hash, peer_id, ip_address, port)
 
         peers_to_return = tracker.get_peers_to_share(info_hash, peer_id, numwant)
-        if compact:
-            encoded_peers = tracker.encode_peers_compact(peers_to_return)
-        else:
-            encoded_peers = tracker.encode_peers_detailed(peers_to_return)
+        encoded_peers = (
+            tracker.encode_peers_compact(peers_to_return)
+            if compact else tracker.encode_peers_detailed(peers_to_return)
+        )
 
         response_data = {
             b'interval': tracker.announce_interval,
