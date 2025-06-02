@@ -10,6 +10,7 @@ import time
 import argparse
 from piece_manager import PieceManager
 from pathlib import Path
+from threading import Thread, Lock
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -36,14 +37,16 @@ def parse_peers(peers_bytes):
 
 class Peer:
     def __init__(self, path: str, torrent_path: str, port: int, ip: str = '0.0.0.0'):
-        self.peer_id = os.urandom(20)
-        self.port = port
-        self.ip = ip
-        meta_info = torrent.decode_torrent(torrent_path)
-        self.tracker_url = meta_info[b'announce'].decode()
-        self.info_hash = torrent.get_info_hash(meta_info)
-        self.handshake_data = self._build_handshake_data()
-        self.piece_manager = PieceManager(path=Path(path), torrent_path=Path(torrent_path))
+        self.peer_id: bytes = os.urandom(20)
+        self.port: int = port
+        self.ip: str = ip
+        meta_info: dict = torrent.decode_torrent(torrent_path)
+        self.tracker_url: str = meta_info[b'announce'].decode()
+        self.info_hash: bytes = torrent.get_info_hash(meta_info)
+        self.handshake_data: bytes = self._build_handshake_data()
+        self.piece_manager: PieceManager = PieceManager(path=Path(path), torrent_path=Path(torrent_path))
+        self.peers_lock = Lock()
+        self.peers = [] # FIXME need to use lock
 
     def _build_handshake_data(self):
         return struct.pack("!B", 19) + b"BitTorrent protocol" + b"\x00" * 8 + self.info_hash + self.peer_id
@@ -60,25 +63,81 @@ class Peer:
             "compact": 1,
         }
         full_url = f"{url}?{urllib.parse.urlencode(params)}"
-        logging.info(f"Sending announce request to: {full_url}")
-        try:
-            response = requests.get(full_url)
-            decoded = bencodepy.decode(response.content)
-            interval = decoded.get(b'interval', 1800)
-            peers = parse_peers(decoded.get(b'peers', b''))
-            logging.info(f"Tracker interval: {interval}, peers: {peers}")
-            print(f"Got peers: {peers}\nSleeping for {interval} seconds...\n")
-            return int(interval)
-        except Exception as e:
-            logging.exception(f"Error sending announce request: {e}")
-            return 1800  # fallback to default 30 min
+        while True:
+            logging.info(f"Sending announce request to: {full_url}")
+            try:
+                response = requests.get(full_url)
+                decoded = bencodepy.decode(response.content)
+                interval = decoded.get(b'interval', 1800)
+                with self.peers_lock:
+                    self.peers = parse_peers(decoded.get(b'peers', b''))
+                    logging.info(f"Tracker interval: {interval}, peers: {self.peers}")
+                    print(f"Got peers: {self.peers}\nSleeping for {interval} seconds...\n")
+                time.sleep(int(interval))
+            except Exception as e:
+                logging.exception(f"Error sending announce request: {e}")
+                time.sleep(1800)  # fallback to default 30 min
 
-    def _start_piece_server(self):
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind()
+    def _recv_exactly(self, conn: socket.socket, size: int) -> bytes:
+        """Receive exactly `size` bytes or raise if connection is closed early."""
+        data = b""
+        while len(data) < size:
+            chunk = conn.recv(size - len(data))
+            if not chunk:
+                raise ConnectionError("Peer disconnected before sending all expected data.")
+            data += chunk
+        return data
 
+    def _recv_handshake(self, conn: socket.socket) -> tuple[bytes, bytes]:
+        data = self._recv_exactly(conn, 68)
+        pstrlen = data[0]
+        pstr = data[1:1 + pstrlen]
+        if pstr != b"BitTorrent protocol":
+            raise ValueError("Unexpected protocol string")
+        info_hash = data[1 + pstrlen + 8:1 + pstrlen + 8 + 20]
+        peer_id = data[1 + pstrlen + 8 + 20:]
+        return info_hash, peer_id
 
+    def _send_handshake(self, sock):
+        sock.send(self.handshake_data)
 
+    def _server_side_handshake(self, client_socket):
+        info_hash, peer_id = self._recv_handshake(client_socket)
+        if info_hash != self.info_hash:
+            return False
+        print(f"received handshake from peer id: {peer_id}")
+        self._send_handshake(client_socket)
+        return True
+
+    def start_piece_server(self):
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind((self.ip, self.port))
+        server_socket.listen()
+        logging.info("piece server is listening...")
+        while True:  # TODO change to multi-client server using threads
+            client_socket, address = server_socket.accept()
+            logging.info(f"received connection from: {address}")
+            if not self._server_side_handshake(client_socket):
+                client_socket.close()
+                continue
+            print("successful handshake by the server!")
+
+    def start_client(self):
+
+        logging.debug(f"sending handshakes to peers : {self.peers}")
+        with self.peers_lock:
+            for peer_server_address in self.peers:
+                logging.debug(f"handshaking {peer_server_address}")
+                ip, port = peer_server_address.split(":")
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client_socket.connect((ip, int(port)))
+                self._send_handshake(client_socket)
+                info_hash, peer_id = self._recv_handshake(client_socket)
+                if info_hash != self.info_hash:
+                    client_socket.close()
+                    print("handshake failed")
+                    continue
+                print("successful handshake by the client!")
 
 def build_arguments():
     parser = argparse.ArgumentParser(description="Run a BitTorrent peer")
@@ -92,12 +151,19 @@ def build_arguments():
 def main():
     args = build_arguments()
     logging.debug(f"running from: {os.getcwd()}")
-    base_dir = os.path.dirname(os.path.abspath(__file__))
 
     peer = Peer(port=args.port, torrent_path=args.torrent, path=args.path)
+    Thread(target=peer.announce, daemon=True).start()
+    print("starting announce...")
+
+    print("starting server...")
+    Thread(target=peer.start_piece_server, daemon=True).start()
+
+    print("starting client...")
+    Thread(target=peer.start_client, daemon=True).start()
+
     while True:
-        interval = peer.announce()
-        time.sleep(interval)
+        time.sleep(1)
 
 
 if __name__ == '__main__':

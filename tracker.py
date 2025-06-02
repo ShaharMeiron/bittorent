@@ -35,7 +35,7 @@ class Tracker:
             if not self.torrents[info_hash]:
                 self.torrents.pop(info_hash, None)
 
-    def count_all_peers(self) -> int:
+    def count_peers(self) -> int:
         return sum(len(peers_dict) for peers_dict in self.torrents.values())
 
     def count_peers_by_ip(self, ip_address: str) -> int:
@@ -96,7 +96,7 @@ def handle_announce():
 
         tracker.cleanup_inactive_peers()
 
-        if tracker.count_all_peers() >= MAX_CONNECTIONS:
+        if tracker.count_peers() >= MAX_CONNECTIONS:
             logging.warning(f"Tracker full — peer from {ip_address}:{port} rejected")
             return Response("Tracker is full", status=503)
 
