@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 
 MAX_CONNECTIONS = 10
-MAX_PEERS_PER_IP = 3
+MAX_PEERS_PER_IP = 100
 
 
 class Tracker:

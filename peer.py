@@ -71,8 +71,9 @@ class Peer:
                 interval = decoded.get(b'interval', 1800)
                 with self.peers_lock:
                     self.peers = parse_peers(decoded.get(b'peers', b''))
-                    logging.info(f"Tracker interval: {interval}, peers: {self.peers}")
                     print(f"Got peers: {self.peers}\nSleeping for {interval} seconds...\n")
+                    print("starting client...")
+                    Thread(target=self.start_client, daemon=True).start()
                 time.sleep(int(interval))
             except Exception as e:
                 logging.exception(f"Error sending announce request: {e}")
@@ -113,10 +114,10 @@ class Peer:
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind((self.ip, self.port))
         server_socket.listen()
-        logging.info("piece server is listening...")
+        print("piece server is listening...")
         while True:  # TODO change to multi-client server using threads
             client_socket, address = server_socket.accept()
-            logging.info(f"received connection from: {address}")
+            print(f"received connection from: {address}")
             if not self._server_side_handshake(client_socket):
                 client_socket.close()
                 continue
@@ -124,10 +125,10 @@ class Peer:
 
     def start_client(self):
 
-        logging.debug(f"sending handshakes to peers : {self.peers}")
+        print(f"sending handshakes to peers : {self.peers}")
         with self.peers_lock:
             for peer_server_address in self.peers:
-                logging.debug(f"handshaking {peer_server_address}")
+                print(f"handshaking {peer_server_address}")
                 ip, port = peer_server_address.split(":")
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 client_socket.connect((ip, int(port)))
@@ -153,14 +154,14 @@ def main():
     logging.debug(f"running from: {os.getcwd()}")
 
     peer = Peer(port=args.port, torrent_path=args.torrent, path=args.path)
-    Thread(target=peer.announce, daemon=True).start()
+    print(f"torrent running with info_hash: {peer.info_hash}")
     print("starting announce...")
+    Thread(target=peer.announce, daemon=True).start()
 
     print("starting server...")
     Thread(target=peer.start_piece_server, daemon=True).start()
 
-    print("starting client...")
-    Thread(target=peer.start_client, daemon=True).start()
+
 
     while True:
         time.sleep(1)
