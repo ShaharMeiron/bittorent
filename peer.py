@@ -11,6 +11,7 @@ import argparse
 from piece_manager import PieceManager
 from pathlib import Path
 from threading import Thread, Lock
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -46,7 +47,9 @@ class Peer:
         self.handshake_data: bytes = self._build_handshake_data()
         self.piece_manager: PieceManager = PieceManager(path=Path(path), torrent_path=Path(torrent_path))
         self.peers_lock = Lock()
-        self.peers = [] # FIXME need to use lock
+        self.peers = []
+        self.server_thread_pool = ThreadPoolExecutor(max_workers=10)
+        self.client_thread_pool = ThreadPoolExecutor(max_workers=10)
 
     def _build_handshake_data(self):
         return struct.pack("!B", 19) + b"BitTorrent protocol" + b"\x00" * 8 + self.info_hash + self.peer_id
@@ -73,7 +76,7 @@ class Peer:
                     self.peers = parse_peers(decoded.get(b'peers', b''))
                     print(f"Got peers: {self.peers}\nSleeping for {interval} seconds...\n")
                     print("starting client...")
-                    Thread(target=self.start_client, daemon=True).start()
+                    Thread(target=self._reach_out_peers, daemon=True).start()
                 time.sleep(int(interval))
             except Exception as e:
                 logging.exception(f"Error sending announce request: {e}")
@@ -110,7 +113,14 @@ class Peer:
         self._send_handshake(client_socket)
         return True
 
-    def start_piece_server(self):
+    def _handle_incoming_peer(self, client_socket):
+        if not self._server_side_handshake(client_socket):
+            client_socket.close()
+            print("handshake failed by the server")
+            return
+        print("successful handshake by the server!")
+
+    def start_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind((self.ip, self.port))
         server_socket.listen()
@@ -118,27 +128,30 @@ class Peer:
         while True:  # TODO change to multi-client server using threads
             client_socket, address = server_socket.accept()
             print(f"received connection from: {address}")
-            if not self._server_side_handshake(client_socket):
-                client_socket.close()
-                continue
-            print("successful handshake by the server!")
+            self.server_thread_pool.submit(self._handle_incoming_peer, client_socket)
 
-    def start_client(self):
+    def _start_client(self, peer_server_address: str):
+        try:
+            print(f"handshaking {peer_server_address}")
+            ip, port = peer_server_address.split(":")
+            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_socket.connect((ip, int(port)))
+            self._send_handshake(client_socket)
+            info_hash, peer_id = self._recv_handshake(client_socket)
+            if info_hash != self.info_hash:
+                client_socket.close()
+                print("handshake failed")
+                return
+            print("successful handshake by the client!")
+        except Exception as e:
+            print(f"❌ Failed to handshake with {peer_server_address}: {e}")
+
+    def _reach_out_peers(self):
 
         print(f"sending handshakes to peers : {self.peers}")
         with self.peers_lock:
             for peer_server_address in self.peers:
-                print(f"handshaking {peer_server_address}")
-                ip, port = peer_server_address.split(":")
-                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                client_socket.connect((ip, int(port)))
-                self._send_handshake(client_socket)
-                info_hash, peer_id = self._recv_handshake(client_socket)
-                if info_hash != self.info_hash:
-                    client_socket.close()
-                    print("handshake failed")
-                    continue
-                print("successful handshake by the client!")
+                self.client_thread_pool.submit(self._start_client, peer_server_address)
 
 def build_arguments():
     parser = argparse.ArgumentParser(description="Run a BitTorrent peer")
@@ -159,9 +172,7 @@ def main():
     Thread(target=peer.announce, daemon=True).start()
 
     print("starting server...")
-    Thread(target=peer.start_piece_server, daemon=True).start()
-
-
+    Thread(target=peer.start_server, daemon=True).start()
 
     while True:
         time.sleep(1)
