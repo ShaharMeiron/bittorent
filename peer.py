@@ -112,6 +112,10 @@ class Peer:
         msg += payload
         sock.sendall(msg)
 
+    def _send_bitfield(self, sock: socket.socket):
+        bitfield = self._build_bitfield()
+        self._send_msg(sock, bitfield, 5)
+
     def _build_bitfield(self) -> bytes:
         bits = 0
         for i, is_piece in enumerate(self.piece_manager.have):
@@ -121,11 +125,28 @@ class Peer:
         real_bits = bits.to_bytes(bitfield_length, 'big')
         return real_bits
 
+    def _recv_msg(self, sock: socket.socket) -> tuple[int, bytes] | None:
+        try:
+            length_prefix = _recv_exactly(sock, 4)
+            msg_length = struct.unpack("!I", length_prefix)[0]
+
+            if msg_length == 0:
+                print("📶 Received keep-alive")
+                return None
+
+            msg_id = _recv_exactly(sock, 1)[0]
+
+            payload_length = msg_length - 1
+            payload = _recv_exactly(sock, payload_length) if payload_length > 0 else b""
+
+            return msg_id, payload
+
+        except Exception as e:
+            print(f"❌ Failed to receive message: {e}")
+            return None
+
     def _handle_peer_connection(self, client_socket):
-        am_choking = 1
-        am_interested = 0
-        peer_choking = 1
-        peer_interested = 0
+        am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
 
         self._send_handshake(client_socket)
         print("sent handshake to a peer")
@@ -137,19 +158,16 @@ class Peer:
         print(f"got handshake from peer: {peer_id.hex()}")
 
         if self.piece_manager.is_file:
-            self._send_msg(client_socket)
+            self._send_bitfield(client_socket)
             print("sent bitfield to a peer")
 
         while True:
             try:
-                pass
+                msg_id, payload = self._recv_msg(client_socket)
+                print(msg_id)
+                print(payload)
             except Exception as e:
                 pass
-
-    # def _recv_msg(self, sock: socket.socket):
-    #     data: bytes = _recv_exactly(sock, 5)
-    #     msg_length =  # 4 bytes big endian integer
-    #     msg_id =  # 1 decimal byte
 
     def start_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -192,11 +210,15 @@ def main():
 
     print("starting server...")
     Thread(target=peer.start_server, daemon=True).start()
-    while True:
-        print("starting announce...")
-        interval = peer.announce()
-        Thread(target=peer.reach_out_peers, daemon=True).start()
-        time.sleep(interval)
+    try:
+        while True:
+            print("starting announce...")
+            interval = peer.announce()
+            Thread(target=peer.reach_out_peers, daemon=True).start()
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\n🛑 Ctrl+C detected — exiting.")
+
 
 
 if __name__ == '__main__':
