@@ -15,9 +15,10 @@ class PieceManager:
         self.pieces_hashes = self.info[b'pieces']
         self.total_size = self._calculate_total_size()
         self.num_pieces = math.ceil(self.total_size / self.piece_length)
+        self.lock = Lock()
         self.have: list[bool] = []
         self.is_file = self._check_file_availability()
-        self.lock = Lock()
+
 
     def _calculate_total_size(self) -> int:
         if b'length' in self.info:

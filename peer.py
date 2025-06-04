@@ -17,8 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-# TODO avoid connecting to the same peer twice
-
 file_handler = logging.FileHandler("peer.log", mode='w')
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(formatter)
@@ -108,19 +106,10 @@ class Peer:
     def _send_handshake(self, sock):
         sock.send(self.handshake_data)
 
-    def _server_side_handshake(self, client_socket):
-        info_hash, peer_id = self._recv_handshake(client_socket)
-        if info_hash != self.info_hash:
-            return False
-        print(f"received handshake from peer id: {peer_id}")
-        self._send_handshake(client_socket)
-        return True
-
-    def _send_bitfield(self, sock: socket.socket):  # bitfield: <len=0001+X><id=5><bitfield>
-        bitfield = self._build_bitfield()
-        msg = struct.pack("!I", 1 + len(bitfield))  # 4-byte length prefix
-        msg += struct.pack("!B", 5)  # 1 byte message ID
-        msg += bitfield
+    def _send_msg(self, sock: socket.socket, payload: bytes, msg_id: int):  # bitfield: <len=0001+X><id=5><bitfield>
+        msg = struct.pack("!I", 1 + len(payload))  # 4-byte length prefix
+        msg += struct.pack("!B", msg_id)  # 1 byte message ID
+        msg += payload
         sock.sendall(msg)
 
     def _build_bitfield(self) -> bytes:
@@ -132,16 +121,35 @@ class Peer:
         real_bits = bits.to_bytes(bitfield_length, 'big')
         return real_bits
 
-    def _handle_incoming_peer(self, client_socket):
-        if not self._server_side_handshake(client_socket):
+    def _handle_peer_connection(self, client_socket):
+        am_choking = 1
+        am_interested = 0
+        peer_choking = 1
+        peer_interested = 0
+
+        self._send_handshake(client_socket)
+        print("sent handshake to a peer")
+
+        info_hash, peer_id = self._recv_handshake(client_socket)
+        if info_hash != self.info_hash:
             client_socket.close()
-            print("handshake failed by the server")
             return
-        print("successful handshake by the server!")
-        self._send_bitfield(client_socket)
+        print(f"got handshake from peer: {peer_id.hex()}")
+
         if self.piece_manager.is_file:
-            self._send_bitfield(client_socket)
-        # TODO send bitfield if there is pieces
+            self._send_msg(client_socket)
+            print("sent bitfield to a peer")
+
+        while True:
+            try:
+                pass
+            except Exception as e:
+                pass
+
+    # def _recv_msg(self, sock: socket.socket):
+    #     data: bytes = _recv_exactly(sock, 5)
+    #     msg_length =  # 4 bytes big endian integer
+    #     msg_id =  # 1 decimal byte
 
     def start_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -151,31 +159,16 @@ class Peer:
         while True:
             client_socket, address = server_socket.accept()
             print(f"received connection from: {address}")
-            self.server_thread_pool.submit(self._handle_incoming_peer, client_socket)
-
-    def _start_client(self, peer_server_address: str):
-        try:
-            print(f"handshaking {peer_server_address}")
-            ip, port = peer_server_address.split(":")
-            client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_socket.connect((ip, int(port)))
-            self._send_handshake(client_socket)
-            info_hash, peer_id = self._recv_handshake(client_socket)
-            if info_hash != self.info_hash:
-                client_socket.close()
-                print("handshake failed")
-                return
-            print("successful handshake by the client!")
-
-        except Exception as e:
-            print(f"❌ Failed to handshake with {peer_server_address}: {e}")
+            self.server_thread_pool.submit(self._handle_peer_connection, client_socket)
 
     def reach_out_peers(self):
-
         print(f"sending handshakes to peers : {self.peers}")
         with self.peers_lock:
             for peer_server_address in self.peers:
-                self.client_thread_pool.submit(self._start_client, peer_server_address)
+                ip, port = peer_server_address.split(":")
+                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client_socket.connect((ip, int(port)))
+                self.client_thread_pool.submit(self._handle_peer_connection, client_socket)
 
 
 def build_arguments():
@@ -194,6 +187,8 @@ def main():
 
     peer = Peer(port=args.port, torrent_path=args.torrent, path=args.path)
     print(f"torrent running with info_hash: {peer.info_hash}")
+
+    # FIXME avoid connecting to the same address twice
 
     print("starting server...")
     Thread(target=peer.start_server, daemon=True).start()
