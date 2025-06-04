@@ -1,3 +1,4 @@
+from math import ceil
 import requests
 import urllib.parse
 import os
@@ -16,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
+# TODO avoid connecting to the same peer twice
+
 file_handler = logging.FileHandler("peer.log", mode='w')
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(formatter)
@@ -27,13 +30,15 @@ def url_encode_bytes(data: bytes) -> str:
     return urllib.parse.quote_from_bytes(data)
 
 
-def parse_peers(peers_bytes):
-    peers = []
-    for i in range(0, len(peers_bytes), 6):
-        ip = socket.inet_ntoa(peers_bytes[i:i + 4]) #converts 4 bytes to ip address
-        port = struct.unpack("!H", peers_bytes[i + 4:i + 6])[0]
-        peers.append(f"{ip}:{port}")
-    return peers
+def _recv_exactly(conn: socket.socket, size: int) -> bytes:
+    """Receive exactly `size` bytes or raise if connection is closed early."""
+    data = b""
+    while len(data) < size:
+        chunk = conn.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("Peer disconnected before sending all expected data.")
+        data += chunk
+    return data
 
 
 class Peer:
@@ -50,6 +55,14 @@ class Peer:
         self.peers = []
         self.server_thread_pool = ThreadPoolExecutor(max_workers=10)
         self.client_thread_pool = ThreadPoolExecutor(max_workers=10)
+
+    def _parse_peers(self, peers_bytes):
+        peers = []
+        for i in range(0, len(peers_bytes), 6):
+            ip = socket.inet_ntoa(peers_bytes[i:i + 4])  # converts 4 bytes to ip address
+            port = struct.unpack("!H", peers_bytes[i + 4:i + 6])[0]
+            peers.append(f"{ip}:{port}")
+        return peers
 
     def _build_handshake_data(self):
         return struct.pack("!B", 19) + b"BitTorrent protocol" + b"\x00" * 8 + self.info_hash + self.peer_id
@@ -73,27 +86,17 @@ class Peer:
                 decoded = bencodepy.decode(response.content)
                 interval = decoded.get(b'interval', 1800)
                 with self.peers_lock:
-                    self.peers = parse_peers(decoded.get(b'peers', b''))
+                    self.peers = self._parse_peers(decoded.get(b'peers', b''))
                     print(f"Got peers: {self.peers}\nSleeping for {interval} seconds...\n")
                     print("starting client...")
-                    Thread(target=self._reach_out_peers, daemon=True).start()
-                time.sleep(int(interval))
+
+                return int(interval)
             except Exception as e:
                 logging.exception(f"Error sending announce request: {e}")
-                time.sleep(1800)  # fallback to default 30 min
-
-    def _recv_exactly(self, conn: socket.socket, size: int) -> bytes:
-        """Receive exactly `size` bytes or raise if connection is closed early."""
-        data = b""
-        while len(data) < size:
-            chunk = conn.recv(size - len(data))
-            if not chunk:
-                raise ConnectionError("Peer disconnected before sending all expected data.")
-            data += chunk
-        return data
+                return 1800  # fallback to default 30 min
 
     def _recv_handshake(self, conn: socket.socket) -> tuple[bytes, bytes]:
-        data = self._recv_exactly(conn, 68)
+        data = _recv_exactly(conn, 68)
         pstrlen = data[0]
         pstr = data[1:1 + pstrlen]
         if pstr != b"BitTorrent protocol":
@@ -113,19 +116,39 @@ class Peer:
         self._send_handshake(client_socket)
         return True
 
+    def _send_bitfield(self, sock: socket.socket):  # bitfield: <len=0001+X><id=5><bitfield>
+        bitfield = self._build_bitfield()
+        msg = struct.pack("!I", 1 + len(bitfield))  # 4-byte length prefix
+        msg += struct.pack("!B", 5)  # 1 byte message ID
+        msg += bitfield
+        sock.sendall(msg)
+
+    def _build_bitfield(self) -> bytes:
+        bits = 0
+        for i, is_piece in enumerate(self.piece_manager.have):
+            if is_piece:
+                bits |= 1 << i
+        bitfield_length = ceil(self.piece_manager.num_pieces / 8)
+        real_bits = bits.to_bytes(bitfield_length, 'big')
+        return real_bits
+
     def _handle_incoming_peer(self, client_socket):
         if not self._server_side_handshake(client_socket):
             client_socket.close()
             print("handshake failed by the server")
             return
         print("successful handshake by the server!")
+        self._send_bitfield(client_socket)
+        if self.piece_manager.is_file:
+            self._send_bitfield(client_socket)
+        # TODO send bitfield if there is pieces
 
     def start_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind((self.ip, self.port))
         server_socket.listen()
         print("piece server is listening...")
-        while True:  # TODO change to multi-client server using threads
+        while True:
             client_socket, address = server_socket.accept()
             print(f"received connection from: {address}")
             self.server_thread_pool.submit(self._handle_incoming_peer, client_socket)
@@ -143,15 +166,17 @@ class Peer:
                 print("handshake failed")
                 return
             print("successful handshake by the client!")
+
         except Exception as e:
             print(f"❌ Failed to handshake with {peer_server_address}: {e}")
 
-    def _reach_out_peers(self):
+    def reach_out_peers(self):
 
         print(f"sending handshakes to peers : {self.peers}")
         with self.peers_lock:
             for peer_server_address in self.peers:
                 self.client_thread_pool.submit(self._start_client, peer_server_address)
+
 
 def build_arguments():
     parser = argparse.ArgumentParser(description="Run a BitTorrent peer")
@@ -162,20 +187,21 @@ def build_arguments():
     args = parser.parse_args()
     return args
 
+
 def main():
     args = build_arguments()
     logging.debug(f"running from: {os.getcwd()}")
 
     peer = Peer(port=args.port, torrent_path=args.torrent, path=args.path)
     print(f"torrent running with info_hash: {peer.info_hash}")
-    print("starting announce...")
-    Thread(target=peer.announce, daemon=True).start()
 
     print("starting server...")
     Thread(target=peer.start_server, daemon=True).start()
-
     while True:
-        time.sleep(1)
+        print("starting announce...")
+        interval = peer.announce()
+        Thread(target=peer.reach_out_peers, daemon=True).start()
+        time.sleep(interval)
 
 
 if __name__ == '__main__':

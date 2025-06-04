@@ -16,6 +16,7 @@ class PieceManager:
         self.total_size = self._calculate_total_size()
         self.num_pieces = math.ceil(self.total_size / self.piece_length)
         self.have: list[bool] = []
+        self.is_file = self._check_file_availability()
         self.lock = Lock()
 
     def _calculate_total_size(self) -> int:
@@ -24,23 +25,24 @@ class PieceManager:
         else:
             return sum(f[b'length'] for f in self.info[b'files'])
 
-    def check_file_availability(self) -> list[bool]: # the first check for file availability which decides if the user has the file or it doesnt
+    def _check_file_availability(self) -> list[bool] | bool:  # the first check for file availability which decides if the user has the file or it doesnt
         """Returns a list of booleans where True means we have that piece."""
-        self.have.clear()
-        if not self.path.exists():
-            self.have = [False] * self.num_pieces
-            return self.have
+        with self.lock:
+            self.have.clear()
+            if not self.path.exists():
+                self.have = [False] * self.num_pieces
+                return False
 
-        with open(self.path, "rb") as f:
-            for i in range(self.num_pieces):
-                data = f.read(self.piece_length)
-                actual_hash = sha1(data).digest()
-                expected_hash = self.pieces_hashes[i * 20:(i + 1) * 20]
-                if actual_hash != expected_hash:
-                    raise ValueError("File exists but hash mismatch. Remove or replace the file.")
-                self.have.append(True)
-
-        return self.have
+            with open(self.path, "rb") as f:
+                for i in range(self.num_pieces):
+                    data = f.read(self.piece_length)
+                    actual_hash = sha1(data).digest()
+                    expected_hash = self.pieces_hashes[i * 20:(i + 1) * 20]
+                    if actual_hash != expected_hash:
+                        self.have.append(False)
+                        continue
+                    self.have.append(True)
+            return True
 
     def has_piece(self, index: int) -> bool:
         with self.lock:
