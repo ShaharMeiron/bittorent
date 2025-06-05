@@ -11,8 +11,12 @@ import time
 import argparse
 from piece_manager import PieceManager
 from pathlib import Path
-from threading import Thread, Lock
+import threading
 from concurrent.futures import ThreadPoolExecutor
+import signal
+import sys
+
+shutdown_event = threading.Event()
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -49,10 +53,9 @@ class Peer:
         self.info_hash: bytes = torrent.get_info_hash(meta_info)
         self.handshake_data: bytes = self._build_handshake_data()
         self.piece_manager: PieceManager = PieceManager(path=Path(path), torrent_path=Path(torrent_path))
-        self.peers_lock = Lock()
+        self.peers_lock = threading.Lock()
         self.peers = []
-        self.server_thread_pool = ThreadPoolExecutor(max_workers=10)
-        self.client_thread_pool = ThreadPoolExecutor(max_workers=10)
+        self.connection_thread_pool = ThreadPoolExecutor(max_workers=20)
 
     def _parse_peers(self, peers_bytes):
         peers = []
@@ -161,23 +164,30 @@ class Peer:
             self._send_bitfield(client_socket)
             print("sent bitfield to a peer")
 
-        while True:
+        while not shutdown_event.is_set():
             try:
                 msg_id, payload = self._recv_msg(client_socket)
                 print(msg_id)
                 print(payload)
             except Exception as e:
                 pass
+        client_socket.close()
 
     def start_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.settimeout(1.0)  # Add timeout!
         server_socket.bind((self.ip, self.port))
         server_socket.listen()
         print("piece server is listening...")
-        while True:
-            client_socket, address = server_socket.accept()
-            print(f"received connection from: {address}")
-            self.server_thread_pool.submit(self._handle_peer_connection, client_socket)
+        while not shutdown_event.is_set():
+            try:
+                client_socket, address = server_socket.accept()
+                print(f"received connection from: {address}")
+                self.connection_thread_pool.submit(self._handle_peer_connection, client_socket)
+            except socket.timeout:
+                continue  # Check for shutdown
+        server_socket.close()
+
 
     def reach_out_peers(self):
         print(f"sending handshakes to peers : {self.peers}")
@@ -186,7 +196,7 @@ class Peer:
                 ip, port = peer_server_address.split(":")
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 client_socket.connect((ip, int(port)))
-                self.client_thread_pool.submit(self._handle_peer_connection, client_socket)
+                self.connection_thread_pool.submit(self._handle_peer_connection, client_socket)
 
 
 def build_arguments():
@@ -199,6 +209,25 @@ def build_arguments():
     return args
 
 
+def signal_handler(sig, frame):
+    print("\n🛑 Ctrl+C detected — exiting.")
+    shutdown_event.set()
+    # Give threads a moment to finish (optional)
+    time.sleep(0.5)
+    sys.exit(0)
+
+
+
+signal.signal(signal.SIGINT, signal_handler)
+
+
+def sleep_with_shutdown(seconds):
+    for _ in range(seconds):
+        if shutdown_event.is_set():
+            break
+        time.sleep(1)
+
+
 def main():
     args = build_arguments()
     logging.debug(f"running from: {os.getcwd()}")
@@ -209,16 +238,16 @@ def main():
     # FIXME avoid connecting to the same address twice
 
     print("starting server...")
-    Thread(target=peer.start_server, daemon=True).start()
-    try:
-        while True:
-            print("starting announce...")
-            interval = peer.announce()
-            Thread(target=peer.reach_out_peers, daemon=True).start()
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        print("\n🛑 Ctrl+C detected — exiting.")
+    threading.Thread(target=peer.start_server, daemon=True).start()
+    while not shutdown_event.is_set():
+        print("starting announce...")
+        interval = peer.announce()
+        threading.Thread(target=peer.reach_out_peers, daemon=True).start()
+        sleep_with_shutdown(interval)
 
 
 if __name__ == '__main__':
     main()
+
+#FIXME peer can spoof it's id
+#TODO GUI
