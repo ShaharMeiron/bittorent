@@ -14,7 +14,7 @@ from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import signal
-import sys
+
 
 shutdown_event = threading.Event()
 
@@ -148,30 +148,57 @@ class Peer:
             print(f"❌ Failed to receive message: {e}")
             return None
 
-    def _handle_peer_connection(self, client_socket):
+    def _bitfield_to_list(self, bitfield: bytes) -> list[bool]:
+        result = []
+        num_pieces = self.piece_manager.num_pieces
+
+        for byte in bitfield:
+            for i in range(8):
+                if len(result) >= num_pieces:
+                    break
+                bit = (byte >> (7 - i)) & 1
+                result.append(bit == 1)
+
+        return result
+
+    def _send_interested(self, sock):
+        self._send_msg(sock, b"", 2)
+
+    def _handle_peer_connection(self, sock):
         am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
 
-        self._send_handshake(client_socket)
+        self._send_handshake(sock)
         print("sent handshake to a peer")
 
-        info_hash, peer_id = self._recv_handshake(client_socket)
+        info_hash, peer_id = self._recv_handshake(sock)
         if info_hash != self.info_hash:
-            client_socket.close()
+            sock.close()
             return
         print(f"got handshake from peer: {peer_id.hex()}")
 
         if self.piece_manager.is_file:
-            self._send_bitfield(client_socket)
+            self._send_bitfield(sock)
             print("sent bitfield to a peer")
 
         while not shutdown_event.is_set():
             try:
-                msg_id, payload = self._recv_msg(client_socket)
-                print(msg_id)
-                print(payload)
+                msg_id, payload = self._recv_msg(sock)
+                # TODO order according to numbers maybe
+                if msg_id == 5:  # bitfield
+                    peer_have = self._bitfield_to_list(payload)
+                    for i, has in enumerate(peer_have):
+                        if has and not self.piece_manager.has_piece(i):
+                            print("→ Sending interested")
+                            self._send_interested(sock)  # msg_id = 2
+                            break
+                if msg_id == 2:
+                    print("← Peer is interested")
+                    peer_interested = 1
+                    self._send_msg(sock, b"", 1)
+
             except Exception as e:
                 pass
-        client_socket.close()
+        sock.close()
 
     def start_server(self):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -187,7 +214,6 @@ class Peer:
             except socket.timeout:
                 continue  # Check for shutdown
         server_socket.close()
-
 
     def reach_out_peers(self):
         print(f"sending handshakes to peers : {self.peers}")
@@ -209,13 +235,12 @@ def build_arguments():
     return args
 
 
-def signal_handler(sig, frame):
+def signal_handler():
     print("\n🛑 Ctrl+C detected — exiting.")
     shutdown_event.set()
     # Give threads a moment to finish (optional)
     time.sleep(0.5)
-    sys.exit(0)
-
+    os._exit(0)
 
 
 signal.signal(signal.SIGINT, signal_handler)
