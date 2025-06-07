@@ -161,8 +161,17 @@ class Peer:
 
         return result
 
+    def _send_choke(self, sock):
+        self._send_msg(sock, b"", 0)
+
+    def _send_unchoke(self, sock):
+        self._send_msg(sock, b"", 1)
+
     def _send_interested(self, sock):
         self._send_msg(sock, b"", 2)
+
+    def _send_not_interested(self, sock):
+        self._send_msg(sock, b"", 3)
 
     def _handle_peer_connection(self, sock):
         am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
@@ -183,18 +192,37 @@ class Peer:
         while not shutdown_event.is_set():
             try:
                 msg_id, payload = self._recv_msg(sock)
-                # TODO order according to numbers maybe
+
+                if msg_id == 0:  # choke
+                    peer_choking = 1
+
+                if msg_id == 1:  # unchoke
+                    peer_choking = 0
+
+                if msg_id == 2:  # interested
+                    print("← Peer is interested")
+                    peer_interested = 1
+                    if am_choking == 1:
+                        self._send_unchoke(sock)
+                        am_choking = 0
+
+                if msg_id == 3:  # not interested
+                    peer_interested = 0
+                    am_choking = 1
+
+                if msg_id == 4:  # piece  TODO
+                    pass
+
                 if msg_id == 5:  # bitfield
                     peer_have = self._bitfield_to_list(payload)
                     for i, has in enumerate(peer_have):
                         if has and not self.piece_manager.has_piece(i):
                             print("→ Sending interested")
-                            self._send_interested(sock)  # msg_id = 2
+                            self._send_interested(sock)
                             break
-                if msg_id == 2:
-                    print("← Peer is interested")
-                    peer_interested = 1
-                    self._send_msg(sock, b"", 1)
+
+                if msg_id == 6:  # request TODO
+                    pass
 
             except Exception as e:
                 pass
