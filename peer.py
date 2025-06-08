@@ -115,10 +115,6 @@ class Peer:
         msg += payload
         sock.sendall(msg)
 
-    def _send_bitfield(self, sock: socket.socket):
-        bitfield = self._build_bitfield()
-        self._send_msg(sock, bitfield, 5)
-
     def _build_bitfield(self) -> bytes:
         bits = 0
         for i, is_piece in enumerate(self.piece_manager.have):
@@ -172,6 +168,22 @@ class Peer:
 
     def _send_not_interested(self, sock):
         self._send_msg(sock, b"", 3)
+
+    def _send_have(self, sock, piece_index: int):
+        payload = struct.pack("!I", piece_index)  # big endian 4 bytes number
+        self._send_msg(sock, payload, 4)
+
+    def _send_bitfield(self, sock: socket.socket):
+        bitfield = self._build_bitfield()
+        self._send_msg(sock, bitfield, 5)
+
+    def _send_request(self, sock: socket.socket, piece_index: int, begin: int, length: int):
+        payload = struct.pack("!I", piece_index) + struct.pack("!I", begin) + struct.pack("!I", length)
+        self._send_msg(sock, payload, 6)
+
+    def _send_piece(self, sock: socket.socket, piece_index: int, begin: int, data: bytes):
+        payload = struct.pack("!I", piece_index) + struct.pack("!I", begin) + data
+        self._send_msg(sock, payload, 7)
 
     def _handle_peer_connection(self, sock):
         am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
