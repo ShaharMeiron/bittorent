@@ -63,3 +63,12 @@ class PieceManager:
     def mark_piece(self, index: int):
         with self.lock:
             self.have[index] = True
+
+    def choose_missing_piece(self, peer_have: list) -> int:
+        for i in range(len(self.have)):
+            if not self.have[i] and peer_have[i]:
+                return i
+
+    def read_piece(self, index, begin, length):
+
+

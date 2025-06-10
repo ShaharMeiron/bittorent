@@ -48,7 +48,7 @@ class Peer:
         self.peer_id: bytes = os.urandom(20)
         self.port: int = port
         self.ip: str = ip
-        meta_info: dict = torrent.decode_torrent(torrent_path)
+        meta_info = torrent.decode_torrent(torrent_path)
         self.tracker_url: str = meta_info[b'announce'].decode()
         self.info_hash: bytes = torrent.get_info_hash(meta_info)
         self.handshake_data: bytes = self._build_handshake_data()
@@ -201,6 +201,8 @@ class Peer:
             self._send_bitfield(sock)
             print("sent bitfield to a peer")
 
+        peer_have = [False] * self.piece_manager.num_pieces
+
         while not shutdown_event.is_set():
             try:
                 msg_id, payload = self._recv_msg(sock)
@@ -210,6 +212,11 @@ class Peer:
 
                 if msg_id == 1:  # unchoke
                     peer_choking = 0
+
+                    #  choose a piece that I am not holding
+                    piece_index = self.piece_manager.choose_missing_piece(peer_have)
+                    if piece_index:
+                        self._send_request(sock, piece_index, 0, self.piece_manager.piece_length)
 
                 if msg_id == 2:  # interested
                     print("← Peer is interested")
@@ -234,7 +241,14 @@ class Peer:
                             break
 
                 if msg_id == 6:  # request TODO
-                    pass
+                    if am_choking:
+                        print("Ignoring request because we are choking them")
+                        continue
+                    index, begin, length = struct.unpack("!III", payload)
+                    data = self.piece_manager.read_piece(index, begin, length)
+                    piece_payload = struct.pack("!II", index, begin) + data
+                    self._send_msg(sock, piece_payload, 7)
+                    print(f"→ Sent piece {index}")
 
             except Exception as e:
                 pass
@@ -314,5 +328,8 @@ def main():
 if __name__ == '__main__':
     main()
 
+
+#TODO build directory structure in the start
 #FIXME peer can spoof it's id
 #TODO GUI
+# FIXME instead of using rglob use the files specified in the torrent and rely on them bc its a vulnerability

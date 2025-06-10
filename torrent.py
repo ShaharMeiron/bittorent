@@ -120,7 +120,7 @@ class Torrent:
         return output_path
 
 
-def get_info_hash(meta_info: dict) -> bytes:
+def get_info_hash(meta_info) -> bytes:
     info_dict = meta_info[b'info']
     bencoded_info = bencodepy.encode(info_dict)
     info_hash = sha1(bencoded_info).digest()
