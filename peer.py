@@ -245,7 +245,7 @@ class Peer:
                         print("Ignoring request because we are choking them")
                         continue
                     index, begin, length = struct.unpack("!III", payload)
-                    data = self.piece_manager.read_piece(index, begin, length)
+                    data = self.piece_manager.read_data(index, begin, length)
                     piece_payload = struct.pack("!II", index, begin) + data
                     self._send_msg(sock, piece_payload, 7)
                     print(f"→ Sent piece {index}")
@@ -332,4 +332,4 @@ if __name__ == '__main__':
 #TODO build directory structure in the start
 #FIXME peer can spoof it's id
 #TODO GUI
-# FIXME instead of using rglob use the files specified in the torrent and rely on them bc its a vulnerability
+

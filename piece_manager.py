@@ -40,13 +40,12 @@ class PieceManager:
                         expected_hash = self.pieces_hashes[i * 20:(i + 1) * 20]
                         self.have.append(actual_hash == expected_hash)
             else:
-                files = self.info[b'files']  #({b'length': 123, b'path': path\\path}, {...)
+                files = self.info[b'files']   # ({b'length': 123, b'path': path\\path}, {...)
                 rest = b""
                 my_pieces = b""
                 for file in files:
                     file_path = self.path / Path(*[part.decode() for part in file[b'path']])
-                    with open(file_path, "rb") as f:
-                        pieces, rest = generate_pieces(self.piece_length, file_path, rest)
+                    pieces, rest = generate_pieces(self.piece_length, file_path, rest)
                     my_pieces += pieces
                 my_pieces += sha1(rest).digest()
 
@@ -69,6 +68,72 @@ class PieceManager:
             if not self.have[i] and peer_have[i]:
                 return i
 
-    def read_piece(self, index, begin, length):
+    def read_data(self, index, begin, length):
+        offset = index * self.piece_length + begin
+        files = self.info.get(b'files')
+        if files is None:
+            with open(self.path, "rb") as f:
+                f.seek(offset)
+                return f.read(length)
 
+        curr_char = 0
+        data = b""
+        bytes_left = length
+        for file in files:
+            file_len = file[b'length']
+            if curr_char + file_len <= offset:
+                curr_char += file_len
+                continue
 
+            file_path = self.path / Path(*[part.decode() for part in file[b'path']])
+            with open(file_path, "rb") as f:
+                in_file_offset = max(0, offset - curr_char)
+                f.seek(in_file_offset)
+                can_read = min(file_len - in_file_offset, bytes_left)
+                current_data = f.read(can_read)
+                data += current_data
+                bytes_left -= len(current_data)
+                offset += len(current_data)
+                if bytes_left == 0:
+                    break
+            curr_char += file_len
+        return data
+
+    def write_piece(self, index, begin, data):
+        offset = index * self.piece_length + begin
+        files = self.info.get(b'files')
+        bytes_left = len(data)
+        data_pos = 0
+
+        if files is None:
+            # single file mode
+            with open(self.path, "r+b") as f:
+                f.seek(offset)
+                f.write(data)
+            return
+
+        curr_char = 0
+        for file in files:
+            file_len = file[b'length']
+            file_path = self.path / Path(*[part.decode() for part in file[b'path']])
+            if not file_path.parent.exists():
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+            if not file_path.exists():
+                with open(file_path, "wb") as temp:
+                    temp.truncate(file_len)
+            if curr_char + file_len <= offset:
+                curr_char += file_len
+                continue
+            in_file_offset = max(0, offset - curr_char)
+            can_write = min(file_len - in_file_offset, bytes_left)
+            with open(file_path, "r+b") as f:
+                f.seek(in_file_offset)
+                f.write(data[data_pos:data_pos + can_write])
+            bytes_left -= can_write
+            data_pos += can_write
+            offset += can_write
+            if bytes_left == 0:
+                break
+            curr_char += file_len
+
+# TODO check read_data, write_data
