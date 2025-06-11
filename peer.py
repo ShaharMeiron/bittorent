@@ -14,6 +14,7 @@ from pathlib import Path
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import signal
+from hashlib import sha1
 
 
 shutdown_event = threading.Event()
@@ -178,14 +179,14 @@ class Peer:
         self._send_msg(sock, bitfield, 5)
 
     def _send_request(self, sock: socket.socket, piece_index: int, begin: int, length: int):
-        payload = struct.pack("!I", piece_index) + struct.pack("!I", begin) + struct.pack("!I", length)
+        payload = struct.pack("!III", piece_index, begin, length)
         self._send_msg(sock, payload, 6)
 
     def _send_piece(self, sock: socket.socket, piece_index: int, begin: int, data: bytes):
-        payload = struct.pack("!I", piece_index) + struct.pack("!I", begin) + data
+        payload = struct.pack("!II", piece_index, begin) + data
         self._send_msg(sock, payload, 7)
 
-    def _handle_peer_connection(self, sock):
+    def _handle_peer_connection(self, sock: socket.socket):
         am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
 
         self._send_handshake(sock)
@@ -229,8 +230,14 @@ class Peer:
                     peer_interested = 0
                     am_choking = 1
 
-                if msg_id == 4:  # piece  TODO
-                    pass
+                if msg_id == 4:  # have
+                    index = struct.unpack("!I", payload)[0]
+
+                    peer_have[index] = True
+                    if not self.piece_manager.have[index]:
+                        if not am_interested:
+                            self._send_interested(sock)
+                        self._send_request(sock, index, 0, self.piece_manager.piece_length) # FIXME length of the last piece can be smaller
 
                 if msg_id == 5:  # bitfield
                     peer_have = self._bitfield_to_list(payload)
@@ -249,7 +256,32 @@ class Peer:
                     piece_payload = struct.pack("!II", index, begin) + data
                     self._send_msg(sock, piece_payload, 7)
                     print(f"→ Sent piece {index}")
+                if msg_id == 7:  # piece
+                    index, begin = struct.unpack("!II", payload[:8])
+                    block_data = payload[8:]
 
+                    self.piece_manager.write_piece(index, begin, block_data)
+                    # data validation
+                    full_piece = self.piece_manager.read_data(index, 0, self.piece_manager.piece_length)
+                    actual_hash = sha1(full_piece).digest()
+                    expected_hash = self.piece_manager.pieces_hashes[index * 20:(index + 1) * 20]
+
+                    if actual_hash == expected_hash:
+                        print(f"✅ Finished piece {index}")
+                        self.piece_manager.mark_piece(index)
+                        self._send_have(sock, index)
+
+                        # בקשת חתיכה חדשה
+                        next_piece = self.piece_manager.choose_missing_piece(peer_have)
+                        if next_piece is not None and peer_choking == 0:
+                            # אורך שונה לחתיכה אחרונה
+                            if next_piece == self.piece_manager.num_pieces - 1:
+                                total_size = self.piece_manager.total_size
+                                length = total_size % self.piece_manager.piece_length or self.piece_manager.piece_length
+                            else:
+                                length = self.piece_manager.piece_length
+
+                            self._send_request(sock, next_piece, 0, length)
             except Exception as e:
                 pass
         sock.close()
@@ -328,8 +360,8 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-#TODO build directory structure in the start
+#TODO complete peer functionality
 #FIXME peer can spoof it's id
 #TODO GUI
+#TODO add encryption
 
