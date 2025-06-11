@@ -52,7 +52,7 @@ class Peer:
         self.tracker_url: str = meta_info[b'announce'].decode()
         self.info_hash: bytes = torrent.get_info_hash(meta_info)
         self.handshake_data: bytes = self._build_handshake_data()
-        self.piece_manager: PieceManager = PieceManager(path=Path(path), torrent_path=Path(torrent_path))
+        self.piece_manager: PieceManager = PieceManager(path=Path(path) / meta_info[b'name'].decode(), torrent_path=Path(torrent_path))
         self.peers_lock = threading.Lock()
         self.peers = []
         self.connection_thread_pool = ThreadPoolExecutor(max_workers=20)

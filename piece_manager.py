@@ -30,6 +30,11 @@ class PieceManager:
             self.have.clear()
             if not self.path.exists():
                 self.have = [False] * self.num_pieces
+                if self.info[b'files']:
+                    self.path.mkdir()
+                else:
+                    with open(self.path, "wb") as f:
+                        pass
                 return False
 
             if self.path.is_file():
