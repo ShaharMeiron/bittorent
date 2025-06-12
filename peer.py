@@ -318,7 +318,7 @@ def build_arguments():
     return args
 
 
-def signal_handler():
+def signal_handler(signum, frame):
     print("\n🛑 Ctrl+C detected — exiting.")
     shutdown_event.set()
     # Give threads a moment to finish (optional)
