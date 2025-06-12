@@ -15,6 +15,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import signal
 from hashlib import sha1
+from pprint import pprint
 
 
 shutdown_event = threading.Event()
@@ -53,7 +54,7 @@ class Peer:
         self.tracker_url: str = meta_info[b'announce'].decode()
         self.info_hash: bytes = torrent.get_info_hash(meta_info)
         self.handshake_data: bytes = self._build_handshake_data()
-        self.piece_manager: PieceManager = PieceManager(path=Path(path) / meta_info[b'name'].decode(), torrent_path=Path(torrent_path))
+        self.piece_manager: PieceManager = PieceManager(path=Path(path) / meta_info[b'info'][b'name'].decode(), torrent_path=Path(torrent_path))
         self.peers_lock = threading.Lock()
         self.peers = []
         self.connection_thread_pool = ThreadPoolExecutor(max_workers=20)
@@ -195,6 +196,7 @@ class Peer:
         info_hash, peer_id = self._recv_handshake(sock)
         if info_hash != self.info_hash:
             sock.close()
+            print("closing connection info_hash didn't match")
             return
         print(f"got handshake from peer: {peer_id.hex()}")
 
@@ -256,6 +258,7 @@ class Peer:
                     piece_payload = struct.pack("!II", index, begin) + data
                     self._send_msg(sock, piece_payload, 7)
                     print(f"→ Sent piece {index}")
+
                 if msg_id == 7:  # piece
                     index, begin = struct.unpack("!II", payload[:8])
                     block_data = payload[8:]
@@ -271,17 +274,11 @@ class Peer:
                         self.piece_manager.mark_piece(index)
                         self._send_have(sock, index)
 
-                        # בקשת חתיכה חדשה
                         next_piece = self.piece_manager.choose_missing_piece(peer_have)
                         if next_piece is not None and peer_choking == 0:
-                            # אורך שונה לחתיכה אחרונה
-                            if next_piece == self.piece_manager.num_pieces - 1:
-                                total_size = self.piece_manager.total_size
-                                length = total_size % self.piece_manager.piece_length or self.piece_manager.piece_length
-                            else:
-                                length = self.piece_manager.piece_length
-
+                            length = self.piece_manager.get_piece_length(next_piece)
                             self._send_request(sock, next_piece, 0, length)
+
             except Exception as e:
                 pass
         sock.close()
@@ -347,6 +344,7 @@ def main():
     print(f"torrent running with info_hash: {peer.info_hash}")
 
     # FIXME avoid connecting to the same address twice
+    peer.connection_thread_pool.shutdown(wait=False)
 
     print("starting server...")
     threading.Thread(target=peer.start_server, daemon=True).start()
@@ -360,8 +358,10 @@ def main():
 if __name__ == '__main__':
     main()
 
+
 #TODO complete peer functionality
 #FIXME peer can spoof it's id
 #TODO GUI
 #TODO add encryption
-
+#FIXME a piece can be requested twice
+#FIXME program doesn't exit properly

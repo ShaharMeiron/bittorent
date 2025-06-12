@@ -73,6 +73,11 @@ class PieceManager:
             if not self.have[i] and peer_have[i]:
                 return i
 
+    def get_piece_length(self, index: int) -> int:
+        if index == self.num_pieces - 1:
+            return self.total_size % self.piece_length or self.piece_length
+        return self.piece_length
+
     def read_data(self, index, begin, length):
         offset = index * self.piece_length + begin
         files = self.info.get(b'files')
