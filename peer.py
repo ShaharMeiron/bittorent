@@ -15,7 +15,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import signal
 from hashlib import sha1
-from pprint import pprint
 
 
 shutdown_event = threading.Event()
@@ -119,10 +118,12 @@ class Peer:
 
     def _build_bitfield(self) -> bytes:
         bits = 0
-        for i, is_piece in enumerate(self.piece_manager.have):
+        have = self.piece_manager.have
+        num_pieces = self.piece_manager.num_pieces
+        for i, is_piece in enumerate(have):
             if is_piece:
-                bits |= 1 << i
-        bitfield_length = ceil(self.piece_manager.num_pieces / 8)
+                bits |= 1 << num_pieces - i
+        bitfield_length = ceil(num_pieces / 8)
         real_bits = bits.to_bytes(bitfield_length, 'big')
         return real_bits
 
@@ -215,7 +216,7 @@ class Peer:
 
                 if msg_id == 1:  # unchoke
                     peer_choking = 0
-
+                    print("peer unchoked me")
                     #  choose a piece that I am not holding
                     piece_index = self.piece_manager.choose_missing_piece(peer_have)
                     if piece_index:
@@ -243,11 +244,11 @@ class Peer:
 
                 if msg_id == 5:  # bitfield
                     peer_have = self._bitfield_to_list(payload)
-                    for i, has in enumerate(peer_have):
-                        if has and not self.piece_manager.has_piece(i):
-                            print("→ Sending interested")
-                            self._send_interested(sock)
-                            break
+                    print(f"got bitfield from peer: {payload.hex()}")
+                    print(peer_have)
+                    if self.piece_manager.choose_missing_piece(peer_have):
+                        print("→ Sending interested")
+                        self._send_interested(sock)
 
                 if msg_id == 6:  # request TODO
                     if am_choking:
@@ -263,7 +264,7 @@ class Peer:
                     index, begin = struct.unpack("!II", payload[:8])
                     block_data = payload[8:]
 
-                    self.piece_manager.write_piece(index, begin, block_data)
+                    self.piece_manager.write_data(index, begin, block_data)
                     # data validation
                     full_piece = self.piece_manager.read_data(index, 0, self.piece_manager.piece_length)
                     actual_hash = sha1(full_piece).digest()
@@ -318,17 +319,6 @@ def build_arguments():
     return args
 
 
-def signal_handler(signum, frame):
-    print("\n🛑 Ctrl+C detected — exiting.")
-    shutdown_event.set()
-    # Give threads a moment to finish (optional)
-    time.sleep(0.5)
-    os._exit(0)
-
-
-signal.signal(signal.SIGINT, signal_handler)
-
-
 def sleep_with_shutdown(seconds):
     for _ in range(seconds):
         if shutdown_event.is_set():
@@ -337,6 +327,15 @@ def sleep_with_shutdown(seconds):
 
 
 def main():
+    def signal_handler(signum, frame):
+        print("\n🛑 Ctrl+C detected — exiting.")
+        shutdown_event.set()
+        # Give threads a moment to finish (optional)
+        time.sleep(0.5)
+        peer.connection_thread_pool.shutdown(wait=False)
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
     args = build_arguments()
     logging.debug(f"running from: {os.getcwd()}")
 
@@ -344,7 +343,6 @@ def main():
     print(f"torrent running with info_hash: {peer.info_hash}")
 
     # FIXME avoid connecting to the same address twice
-    peer.connection_thread_pool.shutdown(wait=False)
 
     print("starting server...")
     threading.Thread(target=peer.start_server, daemon=True).start()

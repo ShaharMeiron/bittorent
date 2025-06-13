@@ -7,7 +7,7 @@ from hashlib import sha1
 import math
 
 
-PIECE_LENGTH = 16384  # 256 KiB
+PIECE_LENGTH = 4  # 256 KiB
 
 
 def calculate_total_size(path: Path) -> int:
@@ -18,17 +18,18 @@ def calculate_total_size(path: Path) -> int:
 
 def generate_pieces(piece_length, file_path: Path, rest: bytes = b"") -> (bytes, bytes):  # returns a bytes string of piece hashes and the rest bytes of the file
     pieces = b""
-    with open(file_path, 'rb') as f:
-        while True:
-            needed = piece_length - len(rest)
-            data = f.read(needed)
-            if not data:
-                break
-            rest += data
-            if len(rest) == piece_length:
-                pieces += sha1(rest).digest()
-                rest = b""
-    return pieces, rest
+    if file_path.is_file():
+        with open(file_path, 'rb') as f:
+            while True:
+                needed = piece_length - len(rest)
+                data = f.read(needed)
+                if not data:
+                    break
+                rest += data
+                if len(rest) == piece_length:
+                    pieces += sha1(rest).digest()
+                    rest = b""
+        return pieces, rest
 
 
 class Torrent:

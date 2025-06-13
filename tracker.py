@@ -15,8 +15,8 @@ logging.basicConfig(
     filemode='a'
 )
 
-MAX_CONNECTIONS = 10
-MAX_PEERS_PER_IP = 100
+MAX_INFO_HASHES = 5
+MAX_CONNECTIONS = 100
 
 
 class Tracker:
@@ -37,13 +37,6 @@ class Tracker:
 
     def count_peers(self) -> int:
         return sum(len(peers_dict) for peers_dict in self.torrents.values())
-
-    def count_peers_by_ip(self, ip_address: str) -> int:
-        return sum(
-            1 for peers_dict in self.torrents.values()
-            for _, (peer_ip, _, _) in peers_dict.items()
-            if peer_ip == ip_address
-        )
 
     def register_peer(self, info_hash: bytes, peer_id: bytes, ip: str, port: int):
         if info_hash not in self.torrents:
@@ -98,12 +91,10 @@ def handle_announce():
 
         if tracker.count_peers() >= MAX_CONNECTIONS:
             logging.warning(f"Tracker full — peer from {ip_address}:{port} rejected")
+            return Response("Tracker is full of connections", status=503)
+        if len(tracker.torrents) >= MAX_INFO_HASHES and info_hash not in tracker.torrents:
+            logging.warning(f"Tracker full of info hashes — peer from {ip_address}:{port} rejected")
             return Response("Tracker is full", status=503)
-
-        if tracker.count_peers_by_ip(ip_address) >= MAX_PEERS_PER_IP:
-            logging.warning(f"Too many peers from IP {ip_address} — rejected")
-            return Response("Too many peers from single IP", status=429)
-
         tracker.register_peer(info_hash, peer_id, ip_address, port)
 
         peers_to_return = tracker.get_peers_to_share(info_hash, peer_id, numwant)

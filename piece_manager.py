@@ -15,6 +15,8 @@ class PieceManager:
         self.pieces_hashes = self.info[b'pieces']
         self.total_size = self._calculate_total_size()
         self.num_pieces = math.ceil(self.total_size / self.piece_length)
+        print(
+            f"total size: {self.total_size}\nnum pieces: {self.num_pieces}\npiece length: {self.piece_length}\npieces hashes: {self.pieces_hashes}")
         self.lock = Lock()
         self.have: list[bool] = []
         self.is_file = self._check_pieces_availability()
@@ -45,7 +47,13 @@ class PieceManager:
                         expected_hash = self.pieces_hashes[i * 20:(i + 1) * 20]
                         self.have.append(actual_hash == expected_hash)
             else:
-                files = self.info[b'files']   # ({b'length': 123, b'path': path\\path}, {...)
+                files = self.info[b'files']
+                        # בודקים שכל הקבצים קיימים לפני שמתחילים לחתוך חתיכות
+                for file in files:
+                    file_path = self.path / Path(*[part.decode() for part in file[b'path']])
+                    if not file_path.exists():
+                        self.have = [False] * self.num_pieces
+                        return False
                 rest = b""
                 my_pieces = b""
                 for file in files:
@@ -79,6 +87,7 @@ class PieceManager:
         return self.piece_length
 
     def read_data(self, index, begin, length):
+        print(f"*******************reading***************\nindex: {index}\nbegin: {begin}\ndata: {data}")
         offset = index * self.piece_length + begin
         files = self.info.get(b'files')
         if files is None:
@@ -109,7 +118,8 @@ class PieceManager:
             curr_char += file_len
         return data
 
-    def write_piece(self, index, begin, data):
+    def write_data(self, index, begin, data):
+        print(f"******************writing***************\nindex: {index}\nbegin: {begin}\ndata: {data}")
         offset = index * self.piece_length + begin
         files = self.info.get(b'files')
         bytes_left = len(data)
