@@ -1,3 +1,4 @@
+import random
 from pathlib import Path
 from hashlib import sha1
 import bencodepy
@@ -20,6 +21,12 @@ class PieceManager:
         self.lock = Lock()
         self.have: list[bool] = []
         self.is_file = self._check_pieces_availability()
+
+        self.is_seeder = all(self.have)
+        if self.is_seeder:
+            self.pieces_have_count = self.num_pieces
+        else:
+            self.pieces_have_count = 0
 
     def _calculate_total_size(self) -> int:
         if b'length' in self.info:
@@ -48,7 +55,7 @@ class PieceManager:
                         self.have.append(actual_hash == expected_hash)
             else:
                 files = self.info[b'files']
-                        # בודקים שכל הקבצים קיימים לפני שמתחילים לחתוך חתיכות
+
                 for file in files:
                     file_path = self.path / Path(*[part.decode() for part in file[b'path']])
                     if not file_path.exists():
@@ -74,12 +81,18 @@ class PieceManager:
 
     def mark_piece(self, index: int):
         with self.lock:
-            self.have[index] = True
+            if not self.have[index]:
+                self.have[index] = True
+                self.pieces_have_count += 1
 
-    def choose_missing_piece(self, peer_have: list) -> int:
-        for i in range(len(self.have)):
-            if not self.have[i] and peer_have[i]:
-                return i
+    def choose_missing_piece(self, peer_have: list, requested_pieces: set) -> int | None:
+        candidates = [
+            i for i in range(len(self.have))
+            if not self.have[i] and peer_have[i] and i not in requested_pieces
+        ]
+        if not candidates:
+            return None
+        return random.choice(candidates)
 
     def get_piece_length(self, index: int) -> int:
         if index == self.num_pieces - 1:
@@ -87,7 +100,7 @@ class PieceManager:
         return self.piece_length
 
     def read_data(self, index, begin, length):
-        print(f"*******************reading***************\nindex: {index}\nbegin: {begin}\ndata: {data}")
+        print(f"*******************reading***************\nindex: {index}\nbegin: {begin}\n***************************************")
         offset = index * self.piece_length + begin
         files = self.info.get(b'files')
         if files is None:
@@ -155,5 +168,3 @@ class PieceManager:
             if bytes_left == 0:
                 break
             curr_char += file_len
-
-# TODO check read_data, write_data
