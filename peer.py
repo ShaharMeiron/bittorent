@@ -461,9 +461,5 @@ if __name__ == '__main__':
     main()
 
 
-#TODO complete peer functionality
 #TODO GUI
 #TODO add encryption
-#FIXME a piece can be requested twice
-#FIXME program doesn't exit properly
-#FIXME the program continue running when there is no peer
