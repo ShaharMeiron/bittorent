@@ -29,6 +29,9 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 CHOKE_DIFF = 5
+MAX_PAYLOAD_LENGTH = 16777216
+
+
 def url_encode_bytes(data: bytes) -> str:
     return urllib.parse.quote_from_bytes(data)
 
@@ -80,7 +83,8 @@ class Peer:
                 data += chunk
             return data
 
-    def _parse_peers(self, peers_bytes):
+    @staticmethod
+    def _parse_peers(peers_bytes):
         peers = []
         for i in range(0, len(peers_bytes), 6):
             ip = socket.inet_ntoa(peers_bytes[i:i + 4])  # converts 4 bytes to ip address
@@ -119,7 +123,8 @@ class Peer:
                 print("Tracker is unavailable. Exiting.")
                 return None
 
-    def _recv_handshake(self, conn: socket.socket) -> tuple[bytes, bytes]:
+    @staticmethod
+    def _recv_handshake(conn: socket.socket) -> tuple[bytes, bytes]:
         data = _recv_exactly(conn, 68)
         pstrlen = data[0]
         pstr = data[1:1 + pstrlen]
@@ -153,19 +158,19 @@ class Peer:
         real_bits = bits.to_bytes(bitfield_length, 'big')
         return real_bits
 
-    def _recv_msg(self, sock: socket.socket) -> tuple[int, bytes] | None:
-
+    @staticmethod
+    def _recv_msg(sock: socket.socket) -> tuple[int, bytes] | None:
         length_prefix = _recv_exactly(sock, 4)
         msg_length = struct.unpack("!I", length_prefix)[0]
         print(f"received length: {msg_length}")
         if msg_length == 0:
-            print("📶 Received keep-alive")
-            return None
+            return -1, b""
         msg_id = _recv_exactly(sock, 1)[0]
         print(f"msg id : {msg_id}")
         payload_length = msg_length - 1
+        if payload_length > MAX_PAYLOAD_LENGTH:
+            return None
         payload = _recv_exactly(sock, payload_length) if payload_length > 0 else b""
-        print(f"payload: {payload}")
         return msg_id, payload
 
     def _bitfield_to_list(self, bitfield: bytes) -> list[bool]:
@@ -187,11 +192,9 @@ class Peer:
 
     def _send_unchoke(self, sock):
         self._send_msg(sock, b"", 1)
-        print("sent unchoke")
 
     def _send_interested(self, sock):
         self._send_msg(sock, b"", 2)
-        print("sent interested")
 
     def _send_not_interested(self, sock):
         self._send_msg(sock, b"", 3)
@@ -216,7 +219,7 @@ class Peer:
     def _add_connection_peer_id(self, peer_id):
         with self.connected_peer_ids_lock:
             self.connected_peer_ids.add(peer_id)
-        print(f"got handshake from peer: {peer_id.hex()}")
+        print(f"[CONN] Got handshake from peer: {peer_id.hex()}")
 
     def _is_connection_valid(self, info_hash, peer_id):
         if info_hash != self.info_hash:
@@ -235,19 +238,20 @@ class Peer:
     def _send_first_bitfield(self, sock, peer_id):
         if self.piece_manager.is_file:
             self._send_bitfield(sock)
-            print(f"sent bitfield peer : {peer_id.hex()}")
+            print(f"[BITFIELD] Sent bitfield to peer: {peer_id.hex()}")
 
     def _remove_requested_piece(self, piece_index):
         with self.requested_pieces_lock:
             self.requested_pieces.discard(piece_index)
 
-    def _answer_request(self, sock: socket.socket, payload: bytes, pieces_sent: int):
+    def _answer_request(self, sock: socket.socket, payload: bytes, pieces_sent: int, peer_id):
         index, begin, length = struct.unpack("!III", payload)
-        print(f"got request for piece {index}, begin: {begin}, length: {length}")
+        print(f"[REQUEST] Got request from {peer_id.hex()} for piece {index}, begin {begin}, length {length}")
+
         data = self.piece_manager.read_data(index, begin, length)
         piece_payload = struct.pack("!II", index, begin) + data
         self._send_msg(sock, piece_payload, 7)
-        print(f"→ Sent piece {index}")
+        print(f"[SEND] → Sent piece {index} to peer {peer_id.hex()}")
         pieces_sent += 1
         return pieces_sent
 
@@ -259,7 +263,7 @@ class Peer:
         am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
 
         self._send_handshake(sock)
-        print("sent handshake to a peer")
+        print(f"[CONN] Sent handshake to peer (before handshake, peer_id unknown)")
 
         info_hash, peer_id = self._recv_handshake(sock)
 
@@ -282,15 +286,22 @@ class Peer:
         try:
             while not shutdown_event.is_set():
 
-                msg_id, payload = self._recv_msg(sock)
+                msg = self._recv_msg(sock)
+                if msg is None:
+                    break
+
+                msg_id, payload = msg
+
+                if msg_id == -1:
+                    print("📶 Received keep-alive")
 
                 if msg_id == 0:  # choke
-                    print("peer choked me")
+                    print(f"[CHOKE] Peer {peer_id.hex()} choked me")
                     peer_choking = 1
 
                 if msg_id == 1:  # unchoke
                     peer_choking = 0
-                    print("peer unchoked me")
+                    print(f"[CHOKE] Peer {peer_id.hex()} unchoked me")
                     #  choose a piece that I am not holding
                     if next_piece is not None:
                         self._send_request(sock, next_piece, 0, self.piece_manager.piece_length)
@@ -298,39 +309,45 @@ class Peer:
                         break
 
                 if msg_id == 2:  # interested
-                    print("← Peer is interested")
+                    print(f"[STATE] ← Peer {peer_id.hex()} is interested")
+
                     peer_interested = 1
                     if am_choking == 1:
                         self._send_unchoke(sock)
+                        print(f"[CHOKE] Sent unchoke to peer {peer_id.hex()}")
                         am_choking = 0
 
                 if msg_id == 3:  # not interested
-                    print("peer is not interested")
+                    print(f"[STATE] Peer {peer_id.hex()} is not interested")
                     peer_interested = 0
                     am_choking = 1
 
                 if msg_id == 4:  # have
 
                     index = struct.unpack("!I", payload)[0]
-                    print(f"peer has piece : {index}")
+                    print(f"[HAVE] Peer {peer_id.hex()} has piece {index}")
                     peer_have[index] = True
                     if not self.piece_manager.have[index]:
                         if not am_interested:
                             self._send_interested(sock)
+                            print(f"[STATE] Sent interested to peer {peer_id.hex()}")
                         self._send_request(sock, index, 0, self.piece_manager.piece_length)
 
                 if msg_id == 5:  # bitfield
                     peer_have = self._bitfield_to_list(payload)
-                    print(f"got bitfield: {peer_have}")
+                    print(f"[BITFIELD] Received bitfield from peer: {peer_id.hex()} | {peer_have}")
+
                     with self.requested_pieces_lock:
                         next_piece = self.piece_manager.choose_missing_piece(peer_have, self.requested_pieces)
                         self.requested_pieces.add(next_piece)
                     if next_piece is not None:
-                        self._send_interested(sock)
+                        if not am_interested:
+                            self._send_interested(sock)
+                            print(f"[STATE] Sent interested to peer {peer_id.hex()}")
 
                 if msg_id == 6:  # request
                     if self.piece_manager.is_seeder:
-                        self._answer_request(sock, payload, pieces_sent)
+                        self._answer_request(sock, payload, pieces_sent, peer_id)
                         continue
 
                     if am_choking:
@@ -340,11 +357,12 @@ class Peer:
                         am_choking = 1
                         self._send_choke(sock)
                         continue
-                    pieces_sent = self._answer_request(sock, payload, pieces_sent)
+                    pieces_sent = self._answer_request(sock, payload, pieces_sent, peer_id)
 
                 if msg_id == 7:  # piece
                     index, begin = struct.unpack("!II", payload[:8])
-                    print(f"peer sent piece {index}, begin: {begin}")
+                    print(f"[PIECE] Received piece {index} from {peer_id.hex()} | begin {begin}")
+
                     if index != next_piece:
                         self._remove_requested_piece(next_piece)
                         break
@@ -359,7 +377,8 @@ class Peer:
 
                     if actual_hash == expected_hash:
                         pieces_received += 1
-                        print(f"✅ Finished piece {index}")
+                        print(f"[DONE] ✅ Finished piece {index} from {peer_id.hex()}")
+
                         self.piece_manager.mark_piece(index)
                         if not self.piece_manager.is_seeder and self.piece_manager.pieces_have_count == self.piece_manager.num_pieces:
                             self.piece_manager.is_seeder = True
@@ -374,26 +393,33 @@ class Peer:
                             self._send_request(sock, next_piece, 0, length)
 
                     else:
-                        print(f"❌ Received invalid piece {index} (bad hash)")
+                        print(f"[INVALID] ❌ Invalid piece {index} from {peer_id.hex()} (bad hash)")
+
                         self._remove_requested_piece(next_piece)
                         break
 
         except Exception as error:
-            print(f"Exception: {error} | peer id : {peer_id.hex()}")
+            print(f"[ERROR] Exception: {error} | peer id: {peer_id.hex()}")
         finally:
             sock.close()
             with self.connected_peer_ids_lock:
                 self.connected_peer_ids.remove(peer_id)
-
             with self.requested_pieces_lock:
                 self.requested_pieces.discard(next_piece)
+            print(f"[CONN] Connection to peer {peer_id.hex()} closed")
 
     def start_server(self):
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.settimeout(1.0)  # Add timeout!
-        server_socket.bind((self.ip, self.port))
-        server_socket.listen()
-        print("piece server is listening...")
+        addr = (self.ip, self.port)
+        try:
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.settimeout(1.0)  # Add timeout!
+            server_socket.bind(addr)
+            server_socket.listen()
+            print(f"[SERVER] Piece server is listening on: {addr}")
+        except Exception as e:
+            print(f"[FATAL] Could not start server on {addr}: {e}")
+            shutdown_event.set()
+            return  # just in case
         while not shutdown_event.is_set():
             try:
                 client_socket, address = server_socket.accept()
@@ -411,6 +437,28 @@ class Peer:
                 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 client_socket.connect((ip, int(port)))
                 self.connection_thread_pool.submit(self._handle_peer_connection, client_socket)
+
+    def run(self):
+        print(f"torrent running with info_hash: {self.info_hash}")
+        print("starting server...")
+        threading.Thread(target=self.start_server, daemon=True).start()
+
+        while not shutdown_event.is_set():
+            print("starting announce...")
+            interval = self.announce()
+            if interval is None or shutdown_event.is_set():
+                print("the tracker is not available, exiting.")
+                shutdown_event.set()
+                break
+            threading.Thread(target=self.reach_out_peers, daemon=True).start()
+            for _ in range(interval):
+                if shutdown_event.is_set():
+                    break
+                time.sleep(1)
+
+        print("Exiting peer.run(). Waiting for threads to finish.")
+        self.connection_thread_pool.shutdown(wait=False)
+        print("Bye! 👋")
 
 
 def build_arguments():
@@ -434,7 +482,6 @@ def main():
     def signal_handler(signum, frame):
         print("\n🛑 Ctrl+C detected — exiting.")
         shutdown_event.set()
-        # Give threads a moment to finish (optional)
         time.sleep(0.5)
         peer.connection_thread_pool.shutdown(wait=False)
         os._exit(0)
@@ -450,16 +497,21 @@ def main():
     while not shutdown_event.is_set():
         print("starting announce...")
         interval = peer.announce()
-        if interval is None:
-            print("the tracker is not available")
+        if interval is None or shutdown_event.is_set():
+            print("the tracker is not available, exiting.")
+            shutdown_event.set()
             break
         threading.Thread(target=peer.reach_out_peers, daemon=True).start()
         sleep_with_shutdown(interval)
+
+    # Cleanup (optional)
+    print("Exiting main. Waiting for threads to finish.")
+    peer.connection_thread_pool.shutdown(wait=False)
+    print("Bye! 👋")
 
 
 if __name__ == '__main__':
     main()
 
 
-#TODO GUI
 #TODO add encryption

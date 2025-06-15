@@ -17,10 +17,11 @@ logging.basicConfig(
 
 MAX_INFO_HASHES = 5
 MAX_CONNECTIONS = 100
+INTERVAL = 1800
 
 
 class Tracker:
-    def __init__(self, announce_interval: int = 1800):
+    def __init__(self, announce_interval: int = INTERVAL):
         self.announce_interval = announce_interval
         self.torrents = {}  # {info_hash: {peer_unique_id: (ip, port, last_seen)}}
 

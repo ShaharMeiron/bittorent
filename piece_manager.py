@@ -39,7 +39,7 @@ class PieceManager:
             self.have.clear()
             if not self.path.exists():
                 self.have = [False] * self.num_pieces
-                if self.info[b'files']:
+                if self.info.get(b'files'):
                     self.path.mkdir()
                 else:
                     with open(self.path, "wb") as f:
@@ -100,7 +100,7 @@ class PieceManager:
         return self.piece_length
 
     def read_data(self, index, begin, length):
-        print(f"*******************reading***************\nindex: {index}\nbegin: {begin}\n***************************************")
+        print(f"reading piece : {index} from character: {begin}")
         offset = index * self.piece_length + begin
         files = self.info.get(b'files')
         if files is None:
@@ -132,7 +132,7 @@ class PieceManager:
         return data
 
     def write_data(self, index, begin, data):
-        print(f"******************writing***************\nindex: {index}\nbegin: {begin}\ndata: {data}")
+        print(f"writing piece : {index} from : {begin}")
         offset = index * self.piece_length + begin
         files = self.info.get(b'files')
         bytes_left = len(data)

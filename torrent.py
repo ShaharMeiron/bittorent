@@ -1,3 +1,4 @@
+import argparse
 import os
 from pathlib import Path
 import time
@@ -7,7 +8,7 @@ from hashlib import sha1
 import math
 
 
-PIECE_LENGTH = 4  # 256 KiB
+PIECE_LENGTH = 524288  # 256 KiB
 
 
 def calculate_total_size(path: Path) -> int:
@@ -137,10 +138,21 @@ def decode_torrent(torrent_path: str) -> Iterable:
         return bencodepy.decode(data)
 
 
+def main():
+    parser = argparse.ArgumentParser(description="Create a .torrent file from a path")
+    parser.add_argument("--path", type=str, help="Path to file or folder to share")
+    parser.add_argument("--length", type=int, default=262144, help="Piece length in bytes (default: 262144 = 256KB)")
+    parser.add_argument("--tracker", type=str, default="http://localhost:6969", help="Tracker URL (default: localhost)")
+    args = parser.parse_args()
+
+    print(f"Creating torrent from: {args.path}")
+    print(f"Piece length: {args.length}")
+    print(f"Tracker: {args.tracker}")
+
+    t = Torrent(path=args.path, piece_length=args.length, announce=args.tracker)
+    torrent_path = t.save_torrent_file()
+    print(f"Torrent file created at: {torrent_path}")
+
+
 if __name__ == '__main__':
-    t = Torrent(path=os.path.join("client1", "example"), announce="http://localhost:6969",
-                creation_date=True)
-    t.save_torrent_file()
-    example_meta_info = decode_torrent(os.path.join("client1", "example.torrent"))
-    from pprint import pprint
-    pprint(example_meta_info)
+    main()
