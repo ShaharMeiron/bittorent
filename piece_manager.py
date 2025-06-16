@@ -16,9 +16,8 @@ class PieceManager:
         self.pieces_hashes = self.info[b'pieces']
         self.total_size = self._calculate_total_size()
         self.num_pieces = math.ceil(self.total_size / self.piece_length)
-        print(
-            f"total size: {self.total_size}\nnum pieces: {self.num_pieces}\npiece length: {self.piece_length}\npieces hashes: {self.pieces_hashes}")
-        self.lock = Lock()
+        print(f"total size: {self.total_size}\nnum pieces: {self.num_pieces}\npiece length: {self.piece_length}\n")
+        self.have_lock = Lock()
         self.have: list[bool] = []
         self.is_file = self._check_pieces_availability()
 
@@ -35,7 +34,7 @@ class PieceManager:
             return sum(f[b'length'] for f in self.info[b'files'])
 
     def _check_pieces_availability(self) -> list[bool] | bool:
-        with self.lock:
+        with self.have_lock:
             self.have.clear()
             if not self.path.exists():
                 self.have = [False] * self.num_pieces
@@ -76,11 +75,11 @@ class PieceManager:
             return True
 
     def has_piece(self, index: int) -> bool:
-        with self.lock:
+        with self.have_lock:
             return self.have[index]
 
     def mark_piece(self, index: int):
-        with self.lock:
+        with self.have_lock:
             if not self.have[index]:
                 self.have[index] = True
                 self.pieces_have_count += 1

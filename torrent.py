@@ -142,8 +142,12 @@ def main():
     parser = argparse.ArgumentParser(description="Create a .torrent file from a path")
     parser.add_argument("--path", type=str, help="Path to file or folder to share")
     parser.add_argument("--length", type=int, default=262144, help="Piece length in bytes (default: 262144 = 256KB)")
-    parser.add_argument("--tracker", type=str, default="http://localhost:6969", help="Tracker URL (default: localhost)")
+    parser.add_argument("--tracker", type=str, default="https://localhost:6969", help="Tracker URL (default: localhost)")
     args = parser.parse_args()
+
+    if not args.path:
+        print("❌ Error: You must specify a --path to the file or directory that you want to make a torrent for.")
+        return
 
     print(f"Creating torrent from: {args.path}")
     print(f"Piece length: {args.length}")

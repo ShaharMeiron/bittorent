@@ -1,3 +1,4 @@
+import ssl
 from math import ceil
 import requests
 import urllib.parse
@@ -97,6 +98,7 @@ class Peer:
 
     def announce(self):
         url = f"{self.tracker_url}/announce"
+        print(f"Announcing to: {url}")
         params = {
             "info_hash": url_encode_bytes(self.info_hash),
             "peer_id": url_encode_bytes(self.peer_id),
@@ -110,7 +112,7 @@ class Peer:
         while True:
             logging.info(f"Sending announce request to: {full_url}")
             try:
-                response = requests.get(full_url)
+                response = requests.get(full_url, verify=False)
                 decoded = bencodepy.decode(response.content)
                 interval = decoded.get(b'interval', 1800)
                 with self.peers_lock:
@@ -415,6 +417,10 @@ class Peer:
             server_socket.settimeout(1.0)  # Add timeout!
             server_socket.bind(addr)
             server_socket.listen()
+
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+
             print(f"[SERVER] Piece server is listening on: {addr}")
         except Exception as e:
             print(f"[FATAL] Could not start server on {addr}: {e}")
@@ -423,8 +429,9 @@ class Peer:
         while not shutdown_event.is_set():
             try:
                 client_socket, address = server_socket.accept()
+                secure_sock = context.wrap_socket(client_socket, server_side=True)
                 print(f"received connection from: {address}")
-                self.connection_thread_pool.submit(self._handle_peer_connection, client_socket)
+                self.connection_thread_pool.submit(self._handle_peer_connection, secure_sock)
             except socket.timeout:
                 continue  # Check for shutdown
         server_socket.close()
@@ -434,9 +441,16 @@ class Peer:
         with self.peers_lock:
             for peer_server_address in self.peers:
                 ip, port = peer_server_address.split(":")
-                client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                client_socket.connect((ip, int(port)))
-                self.connection_thread_pool.submit(self._handle_peer_connection, client_socket)
+
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE  # לא מאמת תעודות לצורך בדיקה
+
+                raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                secure_sock = context.wrap_socket(raw_socket, server_hostname=ip)
+                secure_sock.connect((ip, int(port)))
+                print(f"[TLS] Connected securely to {ip}:{port}")
+                self.connection_thread_pool.submit(self._handle_peer_connection, secure_sock)
 
     def run(self):
         print(f"torrent running with info_hash: {self.info_hash}")
