@@ -1,5 +1,4 @@
 import argparse
-import os
 from pathlib import Path
 import time
 from typing import Iterable
@@ -36,7 +35,7 @@ def generate_pieces(piece_length, file_path: Path, rest: bytes = b"") -> (bytes,
 class Torrent:
     def __init__(self,
                  path: str,
-                 announce: str = "http://localhost:6969",
+                 announce: str = "https://localhost:6969",
                  creation_date: bool = True,
                  announce_list: list[list[str]] | None = None,
                  comment: str | None = None,
