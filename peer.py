@@ -49,14 +49,14 @@ def _recv_exactly(conn: socket.socket, size: int) -> bytes:
 
 
 class Peer:
-    def __init__(self, path: str, torrent_path: str, port: int, ip: str = '0.0.0.0'):
+    def __init__(self, path: str, torrent_path: str, port: int):
         self.peer_id: bytes = os.urandom(20)
         self.connected_peer_ids = set()
         self.connected_peer_ids_lock = threading.Lock()
         self.active_connections = dict()
         self.active_connections_lock = threading.Lock()
         self.port: int = port
-        self.ip: str = ip
+        self.ip: str = '0.0.0.0'
         meta_info = torrent.decode_torrent(torrent_path)
         self.tracker_url: str = meta_info[b'announce'].decode()
         self.info_hash: bytes = torrent.get_info_hash(meta_info)
@@ -238,7 +238,7 @@ class Peer:
         return True
 
     def _send_first_bitfield(self, sock, peer_id):
-        if self.piece_manager.is_file:
+        if self.piece_manager.path_exists:
             self._send_bitfield(sock)
             print(f"[BITFIELD] Sent bitfield to peer: {peer_id.hex()}")
 
@@ -444,7 +444,7 @@ class Peer:
 
                 context = ssl.create_default_context()
                 context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE  # לא מאמת תעודות לצורך בדיקה
+                context.verify_mode = ssl.CERT_NONE
 
                 raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 secure_sock = context.wrap_socket(raw_socket, server_hostname=ip)

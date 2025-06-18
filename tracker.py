@@ -1,3 +1,5 @@
+import argparse
+
 from flask import Flask, request, Response
 import bencodepy
 import urllib.parse
@@ -31,7 +33,7 @@ class Tracker:
             active_peers = self.torrents[info_hash]
             self.torrents[info_hash] = {
                 peer_unique_id: peer_data for peer_unique_id, peer_data in active_peers.items()
-                if now - peer_data[2] <= 3600
+                if now - peer_data[2] <= self.announce_interval
             }
             if not self.torrents[info_hash]:
                 self.torrents.pop(info_hash, None)
@@ -117,4 +119,8 @@ def handle_announce():
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=6969, ssl_context=("cert.pem", "key.pem"))
+    parser = argparse.ArgumentParser(description="Run the BitTorrent tracker.")
+    parser.add_argument('--port', type=int, default=6969, help='Port to run the tracker on (default: 6969)')
+    args = parser.parse_args()
+
+    app.run(host="0.0.0.0", port=args.port, ssl_context=("cert.pem", "key.pem"))

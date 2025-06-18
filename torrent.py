@@ -11,7 +11,7 @@ PIECE_LENGTH = 524288  # 256 KiB
 
 
 def calculate_total_size(path: Path) -> int:
-    files = [f for f in path.rglob('*') if f.is_file()]
+    files = [f for f in path.rglob('*') if f.path_exists()]
     size = sum(f.stat().st_size for f in files)
     return size
 
@@ -99,7 +99,7 @@ class Torrent:
 
     def _build_files_and_pieces_for_directory(self) -> (list[dict], bytes):
         path = self.path
-        file_paths: list[Path] = [f for f in path.rglob("*") if f.is_file()]
+        file_paths: list[Path] = [f for f in path.rglob("*") if f.path_exists()]
         pieces: bytes = b""
         rest: bytes = b""
         files: list[dict] = []

@@ -1,7 +1,6 @@
 import random
 from pathlib import Path
 from hashlib import sha1
-import bencodepy
 from torrent import decode_torrent, generate_pieces
 import math
 from threading import Lock
@@ -19,7 +18,7 @@ class PieceManager:
         print(f"total size: {self.total_size}\nnum pieces: {self.num_pieces}\npiece length: {self.piece_length}\n")
         self.have_lock = Lock()
         self.have: list[bool] = []
-        self.is_file = self._check_pieces_availability()
+        self.path_exists = self._check_pieces_availability()
 
         self.is_seeder = all(self.have)
         if self.is_seeder:
