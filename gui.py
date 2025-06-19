@@ -2,6 +2,10 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 import threading
 import time
+from random import randint
+
+
+PORT = randint(1234, 60000)
 
 class TorrentGUI(tk.Tk):
     def __init__(self):
@@ -13,7 +17,7 @@ class TorrentGUI(tk.Tk):
         # Variables
         self.folder_var = tk.StringVar()
         self.torrent_var = tk.StringVar()
-        self.port_var = tk.StringVar(value="6883")
+        self.port_var = tk.StringVar(value=str(PORT))
         self.status_var = tk.StringVar(value="Waiting for input...")
 
         # Widgets
@@ -62,17 +66,18 @@ class TorrentGUI(tk.Tk):
         threading.Thread(target=self.run_peer, args=(folder, torrent, port), daemon=True).start()
 
     def run_peer(self, folder, torrent, port):
-        from peer import Peer, shutdown_event
+        from peer import Peer
         self.status_var.set("Starting peer...")
         peer = Peer(port=port, torrent_path=torrent, path=folder)
 
         self.updater_running = True
-        threading.Thread(target=self.update_progress, args=(peer,), daemon=True).start()
+        self.update_progress(peer)
         peer.run()
 
     def update_progress(self, peer):
-        while self.updater_running:
-            time.sleep(0.7)
+        def loop():
+            if not self.updater_running:
+                return
             try:
                 total = peer.piece_manager.num_pieces
                 have = peer.piece_manager.pieces_have_count
@@ -81,12 +86,17 @@ class TorrentGUI(tk.Tk):
                 self.status_var.set(f"Progress: {have}/{total} pieces | Connections: {len(peer.active_connections)}")
             except Exception as e:
                 self.status_var.set(f"Error: {e}")
+            self.after(700, loop)  # חזרה על הפעולה כל 0.7 שניות
+
+        self.after(700, loop)
 
     def on_closing(self):
         from peer import shutdown_event
         shutdown_event.set()
         self.updater_running = False
         self.destroy()
+        import os
+        os._exit(0)
 
 
 if __name__ == "__main__":

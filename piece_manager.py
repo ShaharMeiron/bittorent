@@ -1,4 +1,5 @@
 import random
+import time
 from pathlib import Path
 from hashlib import sha1
 from torrent import decode_torrent, generate_pieces
@@ -25,6 +26,7 @@ class PieceManager:
             self.pieces_have_count = self.num_pieces
         else:
             self.pieces_have_count = 0
+
 
     def _calculate_total_size(self) -> int:
         if b'length' in self.info:

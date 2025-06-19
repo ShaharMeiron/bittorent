@@ -264,6 +264,8 @@ class Peer:
     def _handle_peer_connection(self, sock: socket.socket):
         am_choking, am_interested, peer_choking, peer_interested = 1, 0, 1, 0
 
+        download_start = time.time()
+
         self._send_handshake(sock)
         print(f"[CONN] Sent handshake to peer (before handshake, peer_id unknown)")
 
@@ -378,12 +380,15 @@ class Peer:
                     expected_hash = self.piece_manager.pieces_hashes[index * 20:(index + 1) * 20]
 
                     if actual_hash == expected_hash:
+                        time.sleep(0.1)
+                        self.piece_manager.path_exists = True
                         pieces_received += 1
                         print(f"[DONE] ✅ Finished piece {index} from {peer_id.hex()}")
 
                         self.piece_manager.mark_piece(index)
                         if not self.piece_manager.is_seeder and self.piece_manager.pieces_have_count == self.piece_manager.num_pieces:
                             self.piece_manager.is_seeder = True
+                            print(f"download_time: {time.time() - download_start}")
                             print("🎉 I am now a seeder!")
 
                         self._remove_requested_piece(next_piece)
@@ -441,16 +446,20 @@ class Peer:
         with self.peers_lock:
             for peer_server_address in self.peers:
                 ip, port = peer_server_address.split(":")
+                try:
+                    context = ssl.create_default_context()
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
 
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
+                    raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    secure_sock = context.wrap_socket(raw_socket, server_hostname=ip)
+                    secure_sock.connect((ip, int(port)))
+                    print(f"[TLS] Connected securely to {ip}:{port}")
+                    self.connection_thread_pool.submit(self._handle_peer_connection, secure_sock)
 
-                raw_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                secure_sock = context.wrap_socket(raw_socket, server_hostname=ip)
-                secure_sock.connect((ip, int(port)))
-                print(f"[TLS] Connected securely to {ip}:{port}")
-                self.connection_thread_pool.submit(self._handle_peer_connection, secure_sock)
+                except Exception as e:
+                    print(f"[REACH ❌] Failed to connect to {ip}:{port} — {e}")
+
 
     def run(self):
         print(f"torrent running with info_hash: {self.info_hash}")
