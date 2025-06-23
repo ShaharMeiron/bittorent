@@ -1,6 +1,3 @@
 flask~=3.1.0
-pathlib~=1.0.1
 bencodepy~=0.9.5
-hashlib
-math
 requests~=2.32.3
