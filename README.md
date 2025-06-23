@@ -6,7 +6,7 @@ Supports peer-to-peer downloads, `.torrent` file creation, and a basic GUI.
 ---
 
 ## ⚙️ Requirements
-
+python 3.10+
 Install dependencies with:
 
 bash:
