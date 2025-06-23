@@ -16,7 +16,7 @@ pip install -r requirements.txt
 How to use:
 
 1. create a torrent file to share if you have the file/folder you wanna share with:
-python torrent.py --path <path for the file/folder that you want to make a torrent from> --length <piece length(optional)> --tracker <url of the tracker like : https://localhost:6969?
+python torrent.py --path <path for the file/folder that you want to make a torrent from> --length <piece length(optional)> --tracker <url of the tracker like : https://localhost:6969>
 
 2. run a tracker that match the torrent file, can be done with :
 python tracker.py --port <number of port to run on>
